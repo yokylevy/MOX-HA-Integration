@@ -1,0 +1,8 @@
+---
+mox_control:
+  class: Mox_control
+  module: mox_control
+
+mox_status_requester:
+  class: Mox_status_requester
+  module: mox_status_requester

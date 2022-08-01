@@ -1,0 +1,80 @@
+# Configure a default setup of Home Assistant (frontend, api, etc)
+default_config:
+
+# Text to speech
+tts:
+  - platform: google_translate
+
+group: !include groups.yaml
+automation: !include automations.yaml
+script: !include scripts.yaml
+scene: !include scenes.yaml
+
+http:
+  ssl_certificate: /ssl/fullchain.pem
+  ssl_key: /ssl/privkey.pem
+
+sun:
+
+sensor:
+  - platform: time_date
+    display_options:
+      - "time"
+
+jewish_calendar:
+  language: english
+  diaspora: false
+
+input_boolean:
+  entrance:
+    name: Entrance (out)
+    icon: mdi:lightbulb
+  entrance_stairs:
+    name: Entrance stairs
+    icon: mdi:lightbulb
+  entrance_inside:
+    name: Entrance (inside)
+    icon: mdi:lightbulb
+  parents_fan:
+    name: Parents room
+    icon: mdi:fan
+  parents_light:
+    name: Parents room
+    icon: mdi:lightbulb
+  parents_ac:
+    name: Parents room
+    icon: mdi:air-conditioner
+  parents_boiler:
+    name: Parents shower
+    icon: mdi:water-boiler
+  parents_shower_heater:
+    name: Parents shower
+    icon: mdi:radiator
+  kitchen_table_light:
+    name: Kitchen table
+    icon: mdi:lightbulb
+  office_fan:
+    name: Office
+    icon: mdi:fan
+  office_light:
+    name: Office
+    icon: mdi:lightbulb
+  office_ac:
+    name: Office
+    icon: mdi:air-conditioner
+  rooms_floor_ac:
+    name: Rooms floor
+    icon: mdi:air-conditioner
+
+input_number:
+  living_room_curtain:
+    name: Living room curtain
+    min: 0
+    max: 100
+    step: 1
+  rooms_floor_curtain:
+    name: Rooms floor curtain
+    min: 0
+    max: 100
+    step: 1
+

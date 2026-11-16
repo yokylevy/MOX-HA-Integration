@@ -1,24 +1,63 @@
-devices_arr = [
-    { 'name':'central_ac', 'controller': 201, 'port': 24, 'input_type': 'input_boolean' },
-    { 'name':'dining_room_niches', 'controller': 202, 'port': 17, 'input_type': 'input_boolean' },
-    { 'name':'dining_room_table', 'controller': 201, 'port': 20, 'input_type': 'input_boolean' },
-    { 'name':'entrance', 'controller': 201, 'port': 22, 'input_type': 'input_boolean' },
-    { 'name':'entrance_stairs', 'controller': 200, 'port': 23, 'input_type': 'input_boolean' },
-    { 'name':'kitchen_table_light', 'controller': 202, 'port': 18, 'input_type': 'input_boolean' },
-    { 'name':'office_fan', 'controller': 201, 'port': 18, 'input_type': 'input_boolean' },
-    { 'name':'office_light', 'controller': 201, 'port': 17, 'input_type': 'input_boolean' },
-    { 'name':'parents_boiler', 'controller': 200, 'port': 19, 'input_type': 'input_boolean' },
-    { 'name':'parents_fan', 'controller': 202, 'port': 23, 'input_type': 'input_boolean' },
-    { 'name':'parents_light', 'controller': 202, 'port': 22, 'input_type': 'input_boolean' },
-    { 'name':'parents_shower_heater', 'controller': 200, 'port': 17, 'input_type': 'input_boolean' },
-    { 'name':'boiler', 'controller': 222, 'port': 19, 'input_type': 'input_boolean' },
-    { 'name':'shower_heater', 'controller': 221, 'port': 24, 'input_type': 'input_boolean' },
-    { 'name':'office_ac', 'controller': 222, 'port': 18, 'input_type': 'input_boolean' },
-    { 'name':'rooms_floor_ac', 'controller': 222, 'port': 20, 'input_type': 'input_boolean' },
-    { 'name':'parents_ac', 'controller': 200, 'port': 20, 'input_type': 'input_boolean' },
-    { 'name':'living_room_curtain', 'controller': 401, 'port': 17, 'input_type': 'input_number' },
-    { 'name':'rooms_floor_curtain', 'controller': 401, 'port': 18, 'input_type': 'input_number' }
-]
+"""
+Mox device list, loaded from a YAML file kept outside the apps folder.
+
+Default location (inside the AppDaemon add-on): /config/mox_data/mox_devices.yaml,
+i.e. two folders up from this file, then mox_data/. Set the MOX_DEVICES_FILE
+environment variable to use a different file.
+
+The YAML is read once, when AppDaemon imports this module. After editing it,
+restart the AppDaemon add-on (or re-save this file) so the apps reload it.
+"""
+import os
+import yaml
+
+DEVICES_FILE = os.environ.get(
+    'MOX_DEVICES_FILE',
+    os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                  '..', '..', 'mox_data', 'mox_devices.yaml')))
+
+INPUT_TYPES = ('input_boolean', 'input_number')
+
+
+def load_devices(path=DEVICES_FILE):
+    """
+        Reads and validates the device list.
+        :param path: the YAML file to read.
+        :returns: (devices, esp_devices) - a list of device dictionaries and a list of names.
+        :raises ValueError: if the file is missing data or has a bad entry, naming the entry.
+    """
+    with open(path, encoding='utf-8') as f:
+        data = yaml.safe_load(f) or {}
+
+    devices = data.get('devices')
+    if not isinstance(devices, list) or not devices:
+        raise ValueError(f"{path}: 'devices' must be a non-empty list")
+
+    names, slots = set(), set()
+    for i, dev in enumerate(devices, start=1):
+        where = f"{path}: device #{i} ({dev.get('name', '?') if isinstance(dev, dict) else dev})"
+        if not isinstance(dev, dict):
+            raise ValueError(f"{where}: must be a mapping")
+        for key, kind in (('name', str), ('controller', int), ('port', int), ('input_type', str)):
+            if not isinstance(dev.get(key), kind):
+                raise ValueError(f"{where}: '{key}' is missing or not a {kind.__name__}")
+        if dev['input_type'] not in INPUT_TYPES:
+            raise ValueError(f"{where}: input_type must be one of {INPUT_TYPES}")
+        if dev['name'] in names:
+            raise ValueError(f"{where}: duplicate name")
+        if (dev['controller'], dev['port']) in slots:
+            raise ValueError(f"{where}: controller {dev['controller']} port {dev['port']} is already used")
+        names.add(dev['name'])
+        slots.add((dev['controller'], dev['port']))
+
+    esp = data.get('esp_devices') or []
+    if not isinstance(esp, list):
+        raise ValueError(f"{path}: 'esp_devices' must be a list")
+    return devices, esp
+
+
+devices_arr, esp_devices = load_devices()
+
 
 def get_device_by_status(status):
     """

@@ -1,0 +1,23 @@
+# Example Mox device list. Copy this file to mox_devices.yaml in the same
+# folder and replace the entries with your own devices.
+#
+# In the AppDaemon add-on, put it at /config/mox_data/mox_devices.yaml
+# (two folders up from apps/mox, then mox_data/), or point the
+# MOX_DEVICES_FILE environment variable at another file.
+#
+# Each device maps a Home Assistant helper to a Mox controller/port:
+#   name:       helper entity name (input_boolean.<name> or input_number.<name>)
+#   controller: Mox controller number
+#   port:       Mox output on that controller (17-24)
+#   input_type: input_boolean (on/off) or input_number (curtain, 0-100)
+# After editing, restart the AppDaemon add-on so the apps load the new list.
+
+devices:
+  # On/off controller
+  - {name: office_light, controller: 201, port: 17, input_type: input_boolean}
+  - {name: office_fan, controller: 201, port: 18, input_type: input_boolean}
+  # Curtain controller
+  - {name: living_room_curtain, controller: 401, port: 17, input_type: input_number}
+
+# Optional: devices that also have another (e.g. ESPHome) control. Not used by the apps yet.
+esp_devices: []

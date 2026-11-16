@@ -127,3 +127,6 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# Real Mox device list (kept out of the repo; see mox_data/mox_devices.example.yaml)
+mox_data/mox_devices.yaml

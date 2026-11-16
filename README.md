@@ -13,12 +13,14 @@ Changing a helper in Home Assistant switches the real device, and using a wall s
 
 | File | What it does |
 |------|--------------|
-| `appdaemon/Mox/mox_control.py` | Listens for changes to the helpers and sends the matching command to the Mox gateway. Ignores changes that came from Mox status updates (no feedback loops) and rate-limits commands per device. |
-| `appdaemon/Mox/mox_status_requester.py` | Polls the gateway every 30 seconds so it keeps reporting, listens for status messages and updates the helpers. |
-| `appdaemon/Mox/mox_devices.py` | Loads and checks the device list from `mox_data/mox_devices.yaml`. |
+| `appdaemon/Mox/mox_control.py` | Listens for changes to the helpers and sends the matching command to the Mox gateway. A change that matches the state Mox last reported isn't sent (no feedback loops), and a second command to the same device within 2 seconds is delayed, never dropped. |
+| `appdaemon/Mox/mox_status_requester.py` | Polls the gateway every 30 seconds so it keeps reporting, listens for status messages and updates the helpers. Publishes `binary_sensor.mox_gateway_online`. |
+| `appdaemon/Mox/mox_protocol.py` | Builds the UDP messages and reads the status replies (see the table below). |
+| `appdaemon/Mox/mox_devices.py` | Loads and checks the device list and gateway address from `mox_data/mox_devices.yaml`, and reloads it when the file changes. |
 | `appdaemon/Mox/apps.yaml` | Registers the two apps with AppDaemon. |
 | `mox_data/mox_devices.example.yaml` | Example device list: copy it to `mox_devices.yaml` and fill in your devices. |
 | `config/configuration.yaml` | Example Home Assistant helpers for the devices. |
+| `tests/` | Unit tests (no Home Assistant needed): `pip install pyyaml`, then `python -m unittest discover tests`. |
 
 ### The Mox protocol
 
@@ -35,7 +37,7 @@ Status replies start with `03` and are sent to UDP port **6666** on the Home Ass
 ## Requirements
 
 - Home Assistant OS or Supervised, with the **AppDaemon** add-on installed (AppDaemon 4.x).
-- The Mox gateway reachable from the Home Assistant host. The gateway address is set at the top of both apps (`UDP_IP = "172.16.254.254"`); change it to your gateway's IP.
+- The Mox gateway reachable from the Home Assistant host. Its address defaults to `172.16.254.254`; to change it, add a `gateway:` section to `mox_devices.yaml` (see the example file).
 
 ## Deployment
 
@@ -43,7 +45,7 @@ Paths below are for the AppDaemon add-on, whose folder is `/addon_configs/a0d7b9
 
 1. **Copy the apps.** Copy everything in `appdaemon/Mox/` to `/addon_configs/a0d7b954_appdaemon/apps/mox/`.
 
-2. **Create the device list.** Copy `mox_data/mox_devices.example.yaml` to `/addon_configs/a0d7b954_appdaemon/mox_data/mox_devices.yaml` and list your devices (name, controller, output, type). Keep it outside the `apps` folder: AppDaemon reads every YAML file in `apps` as app configuration.
+2. **Create the device list.** Copy `mox_data/mox_devices.example.yaml` to `/addon_configs/a0d7b954_appdaemon/mox_data/mox_devices.yaml`, set your gateway's address and list your devices (name, controller, output, type). Keep it outside the `apps` folder: AppDaemon reads every YAML file in `apps` as app configuration.
 
 3. **Create the helpers in Home Assistant.** For every device, add an `input_boolean` or `input_number` with the same name, either in the UI (Settings > Devices & services > Helpers) or in `configuration.yaml` as in `config/configuration.yaml`. Curtains need `min: 0`, `max: 100`, `step: 1`. Also add an `input_boolean` named `refresh_mox_status`: turning it on asks the gateway for the status of every device.
 
@@ -63,11 +65,11 @@ Paths below are for the AppDaemon add-on, whose folder is `/addon_configs/a0d7b9
 ### Updating
 
 - **Code:** copy the changed `.py` files to `apps/mox`. AppDaemon reloads the apps by itself.
-- **Device list:** after editing `mox_devices.yaml`, restart the AppDaemon add-on (AppDaemon only notices changes to `.py` files).
+- **Device list:** just save `mox_devices.yaml`. `mox_control` checks it every 30 seconds and reloads it (`mox.log`: `mox_devices.yaml reloaded: N devices`). If the file has an error, the log names it and the previous list stays in use. Add the Home Assistant helpers for new devices before saving. Changing `listen_port` needs an AppDaemon restart.
 
 ### Optional: Shabbat and holidays
 
-`mox_control` resends the "on" command for every helper that is on, once a minute, while `binary_sensor.jewish_calendar_issur_melacha_in_effect_2` is on (from the Jewish Calendar integration). This restores devices after a power cut when nobody will switch them back on by hand. Without that sensor the feature stays inactive; to use another sensor, change the entity name in `recover_state()` in `mox_control.py`.
+`mox_control` resends the "on" command for every helper that is on, once a minute, while `binary_sensor.jewish_calendar_issur_melacha_in_effect_2` is on (from the Jewish Calendar integration). This restores devices after a power cut when nobody will switch them back on by hand. Without that sensor the feature stays inactive; to use another sensor, change `RECOVER_SENSOR` at the top of `mox_control.py`.
 
 ### Gateway online sensor and alert
 
@@ -130,8 +132,8 @@ Example automation that notifies a phone (replace `notify.mobile_app_my_phone` w
 
 ## Troubleshooting
 
-- **`binary_sensor.mox_gateway_online` is off, or commands are logged but nothing switches and `mox.log` has no `mox_status_requester` lines:** the gateway can't be reached. Check its power and network connection, and that `UDP_IP` is still its address.
-- **The apps fail to start after editing the device list:** the error log names the bad entry (missing field, unknown `input_type`, duplicate name, or a controller/output used twice).
+- **`binary_sensor.mox_gateway_online` is off, or commands are logged but nothing switches and `mox.log` has no `mox_status_requester` lines:** the gateway can't be reached. Check its power and network connection, and that the `gateway` address in `mox_devices.yaml` is still right.
+- **A device list edit isn't picked up:** `mox.log` shows `mox_devices.yaml not reloaded` with the bad entry (missing field, unknown `input_type`, duplicate name, or a controller/output used twice). Fix it and save again. If the file is broken when AppDaemon starts, the apps don't start and the error log names the entry.
 - **A device changes in Mox but not in Home Assistant:** check that its name in `mox_devices.yaml` matches the helper exactly.
 
 ## Background

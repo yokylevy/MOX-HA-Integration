@@ -1,12 +1,13 @@
 """
-Mox device list, loaded from a YAML file kept outside the apps folder.
+Mox device list and gateway address, loaded from a YAML file kept outside the apps folder.
 
 Default location (inside the AppDaemon add-on): /config/mox_data/mox_devices.yaml,
 i.e. two folders up from this file, then mox_data/. Set the MOX_DEVICES_FILE
 environment variable to use a different file.
 
-The YAML is read once, when AppDaemon imports this module. After editing it,
-restart the AppDaemon add-on (or re-save this file) so the apps reload it.
+The file is read when AppDaemon imports this module. mox_control then calls
+reload_if_changed() every 30 seconds, so edits are picked up without a restart.
+The lists below are updated in place, so every app that imported them sees the new data.
 """
 import os
 import yaml
@@ -18,16 +19,26 @@ DEVICES_FILE = os.environ.get(
 
 INPUT_TYPES = ('input_boolean', 'input_number')
 
+# Used for any gateway setting missing from the YAML file.
+DEFAULT_GATEWAY = {
+    'ip': '172.16.254.254',   # Mox gateway address
+    'port': 6670,             # UDP port the gateway listens on
+    'listen_port': 6666,      # UDP port the gateway sends status replies to
+}
 
-def load_devices(path=DEVICES_FILE):
+
+def load_config(path=DEVICES_FILE):
     """
-        Reads and validates the device list.
+        Reads and validates the YAML file.
         :param path: the YAML file to read.
-        :returns: (devices, esp_devices) - a list of device dictionaries and a list of names.
+        :returns: (devices, esp_devices, gateway) - a list of device dictionaries,
+                  a list of names, and a dictionary with ip, port and listen_port.
         :raises ValueError: if the file is missing data or has a bad entry, naming the entry.
     """
     with open(path, encoding='utf-8') as f:
         data = yaml.safe_load(f) or {}
+    if not isinstance(data, dict):
+        raise ValueError(f"{path}: must be a mapping with a 'devices' list")
 
     devices = data.get('devices')
     if not isinstance(devices, list) or not devices:
@@ -53,35 +64,105 @@ def load_devices(path=DEVICES_FILE):
     esp = data.get('esp_devices') or []
     if not isinstance(esp, list):
         raise ValueError(f"{path}: 'esp_devices' must be a list")
+
+    gw_data = data.get('gateway') or {}
+    if not isinstance(gw_data, dict):
+        raise ValueError(f"{path}: 'gateway' must be a mapping")
+    unknown = set(gw_data) - set(DEFAULT_GATEWAY)
+    if unknown:
+        raise ValueError(f"{path}: unknown gateway setting(s): {', '.join(sorted(unknown))}")
+    gw = dict(DEFAULT_GATEWAY, **gw_data)
+    if not isinstance(gw['ip'], str):
+        raise ValueError(f"{path}: gateway ip must be a string")
+    for key in ('port', 'listen_port'):
+        if not isinstance(gw[key], int) or not 0 < gw[key] < 65536:
+            raise ValueError(f"{path}: gateway {key} must be a port number")
+
+    return devices, esp, gw
+
+
+def load_devices(path=DEVICES_FILE):
+    """
+        Reads and validates the device list.
+        :returns: (devices, esp_devices).
+    """
+    devices, esp, _ = load_config(path)
     return devices, esp
 
 
-devices_arr, esp_devices = load_devices()
+# Shared with the apps. Updated in place by reload_if_changed(): never rebind them.
+devices_arr = []
+esp_devices = []
+gateway = {}
+_loaded_mtime = None
+
+
+def _apply(path):
+    global _loaded_mtime
+    mtime = os.path.getmtime(path)
+    devices, esp, gw = load_config(path)
+    devices_arr[:] = devices
+    esp_devices[:] = esp
+    gateway.clear()
+    gateway.update(gw)
+    _loaded_mtime = mtime
+
+
+def reload_if_changed(path=DEVICES_FILE):
+    """
+        Reloads the YAML file if it was saved since it was last loaded.
+        A bad file is reported and the previous lists are kept.
+        :returns: (reloaded, error) - (True, None) after a reload, (False, None) when
+                  nothing changed, (False, message) when the new file is invalid.
+    """
+    global _loaded_mtime
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError as e:
+        return False, str(e)
+    if mtime == _loaded_mtime:
+        return False, None
+    try:
+        _apply(path)
+    except Exception as e:  # yaml error, ValueError, file being written...
+        _loaded_mtime = mtime  # report this version once, not every 30 seconds
+        return False, str(e)
+    return True, None
+
+
+_apply(DEVICES_FILE)
+
+
+def get_device_by_controller(controller, port):
+    """
+        Gets the device on a controller output.
+        :returns: a device dictionary if found or empty dictionary if not.
+    """
+    for dev in devices_arr:
+        if dev['controller'] == controller and dev['port'] == port:
+            return dev
+    return {}
 
 
 def get_device_by_status(status):
     """
         Gets the device by parsing the status string.
-        :param status: the string recived from Mox Gateway.
-        :returns: a divice dictionary if found or empty dictionary if not.
+        :param status: the hex string received from Mox Gateway.
+        :returns: a device dictionary if found or empty dictionary if not.
         :rtype: dictionary.
     """
-    controller = int(status[4: 8], 16)
-    port = int(status[8: 10], 16)
-    dev = list(filter(lambda x: x['controller'] == controller and x['port'] == port, devices_arr))
-    if len(dev) == 0:
-        return {}
-    return dev[0]
+    return get_device_by_controller(int(status[4:8], 16), int(status[8:10], 16))
+
 
 def get_device_by_name(device_name):
     """
         Gets the device by device name.
         :param device_name: the requested device.
         :type device_name: string.
-        :returns: a divice dictionary if found or empty dictionary if not.
+        :returns: a device dictionary if found or empty dictionary if not.
         :rtype: dictionary.
     """
-    dev = list(filter(lambda x: x['name'] == device_name, devices_arr))
-    if len(dev) == 0:
-        return {}
-    return dev[0]
+    for dev in devices_arr:
+        if dev['name'] == device_name:
+            return dev
+    return {}

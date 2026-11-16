@@ -69,9 +69,68 @@ Paths below are for the AppDaemon add-on, whose folder is `/addon_configs/a0d7b9
 
 `mox_control` resends the "on" command for every helper that is on, once a minute, while `binary_sensor.jewish_calendar_issur_melacha_in_effect_2` is on (from the Jewish Calendar integration). This restores devices after a power cut when nobody will switch them back on by hand. Without that sensor the feature stays inactive; to use another sensor, change the entity name in `recover_state()` in `mox_control.py`.
 
+### Gateway online sensor and alert
+
+`mox_status_requester` publishes `binary_sensor.mox_gateway_online` (device class *connectivity*). It is **on** while Mox messages keep arriving (normally many per minute) and turns **off** when none has arrived for 10 minutes. Its attributes show `last_message` and `messages_received`. Change the limit in `apps.yaml`:
+
+```yaml
+mox_status_requester:
+  module: mox_status_requester
+  class: Mox_status_requester
+  offline_after: 600   # seconds without a Mox message before the gateway counts as offline
+```
+
+The sensor is created by AppDaemon, so it appears a few seconds after AppDaemon starts, and it is refreshed every 10 minutes (it comes back by itself after a Home Assistant restart). `mox.log` records each change (`Mox gateway is OFFLINE` / `online`).
+
+Example automation that notifies a phone (replace `notify.mobile_app_my_phone` with your phone's notify action):
+
+```yaml
+- alias: Mox gateway offline alert
+  triggers:
+  - trigger: state
+    entity_id: binary_sensor.mox_gateway_online
+    from: 'on'
+    to: 'off'
+    id: offline
+  - trigger: state
+    entity_id: binary_sensor.mox_gateway_online
+    from: 'off'
+    to: 'on'
+    id: online
+  actions:
+  - choose:
+    - conditions:
+      - condition: trigger
+        id: offline
+      sequence:
+      - action: notify.mobile_app_my_phone
+        data:
+          title: Mox gateway offline
+          message: >-
+            No message from the Mox gateway since
+            {{ state_attr('binary_sensor.mox_gateway_online', 'last_message') }}.
+      - action: persistent_notification.create
+        data:
+          notification_id: mox_gateway_offline
+          title: Mox gateway offline
+          message: Check the gateway's power and network connection.
+    - conditions:
+      - condition: trigger
+        id: online
+      sequence:
+      - action: notify.mobile_app_my_phone
+        data:
+          title: Mox gateway back online
+          message: The Mox gateway is responding again.
+      - action: persistent_notification.dismiss
+        data:
+          notification_id: mox_gateway_offline
+  mode: queued
+```
+
 ## Troubleshooting
 
-- **Commands are logged but nothing switches, and `mox.log` has no `mox_status_requester` lines:** the gateway can't be reached. Check its power and network connection, and that `UDP_IP` is still its address.
+- **`binary_sensor.mox_gateway_online` is off, or commands are logged but nothing switches and `mox.log` has no `mox_status_requester` lines:** the gateway can't be reached. Check its power and network connection, and that `UDP_IP` is still its address.
 - **The apps fail to start after editing the device list:** the error log names the bad entry (missing field, unknown `input_type`, duplicate name, or a controller/output used twice).
 - **A device changes in Mox but not in Home Assistant:** check that its name in `mox_devices.yaml` matches the helper exactly.
 

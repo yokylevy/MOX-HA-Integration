@@ -22,3 +22,9 @@ I added a separate file with a dictionarry off all my home devices, includig nam
 Now every change of any variable on my Home Assistant dashboard is turning devices on or off, and avery manual change (using wall switches) is represented amidiatly on my Home Assistant dashboard.<br />
 I can now do much more clever automations with my smart home than I could before.<br />
 The joy came back to my life :-), Hope it can help you too.
+
+## Setup
+- Copy `appdaemon/Mox/*` to the AppDaemon `apps/mox` folder.
+- Copy `mox_data/mox_devices.example.yaml` to `mox_data/mox_devices.yaml` next to the `apps` folder (in the AppDaemon add-on: `/config/mox_data/mox_devices.yaml`) and list your devices there.
+- The device list is checked when the apps load: a missing field, an unknown `input_type`, a duplicate name or a reused controller/port stops the apps with an error naming the entry.
+- After editing `mox_devices.yaml`, restart the AppDaemon add-on.

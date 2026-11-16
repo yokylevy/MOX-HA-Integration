@@ -130,3 +130,7 @@ dmypy.json
 
 # Real Mox device list (kept out of the repo; see mox_data/mox_devices.example.yaml)
 mox_data/mox_devices.yaml
+
+# Visual Studio / VS Code workspace files
+.vs/
+.vscode/

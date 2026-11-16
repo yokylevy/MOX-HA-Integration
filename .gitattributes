@@ -1,0 +1,2 @@
+# Keep LF line endings in the repo and on Home Assistant (Linux), whatever the editor.
+* text=auto eol=lf

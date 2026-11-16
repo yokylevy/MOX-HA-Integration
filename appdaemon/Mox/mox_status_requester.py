@@ -32,6 +32,10 @@ class Mox_status_requester(hass.Hass):
         # late report of the old state can't undo a command just sent from HA.
         self.device_states = {}
 
+        # Optional (apps.yaml): an input_boolean such as "away from home" that is
+        # turned off whenever someone uses a wall switch, since someone is home.
+        self.away_switch = self.args.get('away_switch')
+
         self.run_every(self.poke_mox_servar, "now", 30)
         self.status_thread = threading.Thread(target=self.get_status, daemon=True)
         self.status_thread.start()
@@ -152,6 +156,18 @@ class Mox_status_requester(hass.Hass):
             else:
                 self.turn_off(entity)
             self.log(f'{label} {value}', log="mox_log")
+            self.wall_switch_used(name)
+
+    def wall_switch_used(self, name):
+        """
+        An on/off device changed in Mox without Home Assistant asking: someone is
+        home, so turn off the away_switch helper (if one is set in apps.yaml).
+        """
+        if not self.away_switch or time.time() - self.started < 120:
+            return  # just started: the first reports only bring HA up to date
+        if self.get_state(self.away_switch) == 'on':
+            self.turn_off(self.away_switch)
+            self.log(f'{self.away_switch} turned off: {name} was switched at home', log="mox_log")
 
     def check_gateway(self, kwargs):
         """

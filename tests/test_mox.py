@@ -155,6 +155,8 @@ class AppTests(unittest.TestCase):
         self.requester = Mox_status_requester(states=self.states)
         self.requester.device_states = {}
         self.requester.device_num = 0
+        self.requester.away_switch = None
+        self.requester.started = time.time() - 300
         Hass.apps.update(mox_control=self.control, mox_status_requester=self.requester)
 
     def receive(self, device, value):
@@ -198,6 +200,22 @@ class AppTests(unittest.TestCase):
         self.assertEqual(self.control.sock.sent, [])
         self.control.call_service('input_number/set_value', entity_id='input_number.living_room_curtain', value=80)
         self.assertEqual(self.control.sock.sent[-1][0], '030001911101000002045000')
+
+    def test_wall_switch_turns_away_switch_off(self):
+        self.requester.away_switch = 'input_boolean.away_from_home'
+        self.states['input_boolean.away_from_home'] = 'on'
+        self.requester.started = time.time()
+        self.receive(OFFICE_LIGHT, 'on')  # within 2 minutes of starting: not counted
+        self.assertEqual(self.states['input_boolean.away_from_home'], 'on')
+        self.requester.started = time.time() - 300
+        self.receive(OFFICE_LIGHT, 'off')  # wall switch
+        self.assertEqual(self.states['input_boolean.away_from_home'], 'off')
+        self.states['input_boolean.away_from_home'] = 'on'
+        self.control.turn_on('input_boolean.office_light')  # HA command and its report
+        self.receive(OFFICE_LIGHT, 'on')
+        self.assertEqual(self.states['input_boolean.away_from_home'], 'on')
+        self.receive(OFFICE_LIGHT, 'off')  # wall switch
+        self.assertEqual(self.states['input_boolean.away_from_home'], 'off')
 
     def test_poll_covers_every_device(self):
         self.requester.sock = FakeSocket()

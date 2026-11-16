@@ -71,6 +71,17 @@ Paths below are for the AppDaemon add-on, whose folder is `/addon_configs/a0d7b9
 
 `mox_control` resends the "on" command for every helper that is on, once a minute, while `binary_sensor.jewish_calendar_issur_melacha_in_effect_2` is on (from the Jewish Calendar integration). This restores devices after a power cut when nobody will switch them back on by hand. Without that sensor the feature stays inactive; to use another sensor, change `RECOVER_SENSOR` at the top of `mox_control.py`.
 
+### Optional: "away from home" switch
+
+Set `away_switch` to an `input_boolean` (for example one you turn on in the app when you leave). `mox_status_requester` turns it off whenever an on/off device is switched in Mox without Home Assistant asking, such as a wall switch, because someone is home. Changes made from Home Assistant don't count, nor do the first 2 minutes after AppDaemon starts (while the helpers catch up with Mox). `mox.log` shows `… turned off: <device> was switched at home`.
+
+```yaml
+mox_status_requester:
+  module: mox_status_requester
+  class: Mox_status_requester
+  away_switch: input_boolean.away_from_home
+```
+
 ### Gateway online sensor and alert
 
 `mox_status_requester` publishes `binary_sensor.mox_gateway_online` (device class *connectivity*). It is **on** while Mox messages keep arriving (normally many per minute) and turns **off** when none has arrived for 10 minutes. Its attributes show `last_message` and `messages_received`. Change the limit in `apps.yaml`:

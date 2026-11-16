@@ -23,7 +23,15 @@
 # Every name listed here needs a matching helper in Home Assistant
 # (see config/configuration.yaml for examples).
 #
-# After editing this file, restart the AppDaemon add-on so the apps load it.
+# Changes are picked up within 30 seconds, without restarting AppDaemon. If the
+# edited file has an error, mox.log says so and the previous list stays in use.
+
+# Optional: the Mox gateway address. Leave it out to use these defaults.
+# Changing listen_port needs an AppDaemon restart; the others apply on reload.
+gateway:
+  ip: 172.16.254.254   # Mox gateway IP
+  port: 6670           # UDP port the gateway listens on
+  listen_port: 6666    # UDP port the gateway sends status replies to
 
 devices:
   # Controller 200 - on/off outputs

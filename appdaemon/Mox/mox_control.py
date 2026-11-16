@@ -1,115 +1,109 @@
 import time
-from mox_devices import *
-import appdaemon.plugins.hass.hassapi as hass
 import socket
+import appdaemon.plugins.hass.hassapi as hass
+import mox_devices
+from mox_devices import devices_arr, gateway, get_device_by_name
+from mox_protocol import switch_message, curtain_message
 
-#MOX IP & Port
-UDP_IP = "172.16.254.254"
-UDP_PORT = 6670
+# While this sensor is on (Shabbat and holidays), "on" devices are switched on again
+# every minute, to restore them after a power cut.
+RECOVER_SENSOR = "binary_sensor.jewish_calendar_issur_melacha_in_effect_2"
 
-#devices dictionary, ToDo: get from json file.
 
-def switch_message(device_name, turn_on = True):
-    """Builds a Mox turn on/off hex message by device_name and requested on/off state.
-    Keyword arguments:
-    device_name -- The device name.
-    turn_on -- The dezired state (default True).
+def parse_value(input_type, state):
     """
-    device = get_device_by_name(device_name)
-    controller = format(device['controller'], 'x').zfill(6)
-    return bytes.fromhex(f"03{controller}{format(device['port'], 'x').zfill(2)}01000002030{1 if turn_on else 0}")
-
-def curtain_message(device_name, precent):
-    """Builds a Mox curtain opening hex message by device_name and requested openning precentage.
-    Keyword arguments:
-    device_name -- The device name.
-    precent -- The dezired openning precentage.
+        A helper's state as the value Mox uses: 'on'/'off' for switches, 0-100 for curtains.
+        :returns: the value, or None if the state isn't valid.
     """
-    device = get_device_by_name(device_name)
-    controller = format(device['controller'], 'x').zfill(6)
-    position = format(precent, 'x').zfill(2)
-    message = f"03{controller}{format(device['port'], 'x').zfill(2)}0100000204{position}00"
-    return bytes.fromhex(message)
+    if input_type == 'input_boolean':
+        return state if state in ('on', 'off') else None
+    try:
+        percent = int(float(state))
+    except (ValueError, TypeError):
+        return None
+    return percent if 0 <= percent <= 100 else None
+
+
+def same_value(input_type, a, b):
+    """
+        True if two values mean the same device state (curtains within 2%).
+    """
+    if a is None or b is None:
+        return False
+    if input_type == 'input_number':
+        return abs(a - b) < 2
+    return a == b
+
 
 class Mox_control(hass.Hass):
     def initialize(self):
-        #self.log('Mox_control initialized.', log="mox_log")
-        # Init Mox socket
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        # Init listeners on Mox status change.
+
+        self.last_commands = {}      # device name -> time of the last command sent
+        self.min_command_interval = 2  # minimum seconds between commands to one device
+        self.pending_sends = {}      # device name -> timer handle of a delayed command
+        # Device name -> the state Mox last reported, or the state we last sent it.
+        # A helper change that matches it came from Mox (a wall switch) or needs no
+        # command, so nothing is sent: this is what prevents feedback loops.
+        self.mox_state = {}
+        self.listener_handles = []
+
         self.init_listeners()
-        # Restore state after electricity fall.
         self.run_every(self.recover_state, "now", 60)
-        
-        # CRITICAL FIX: Track command origins to prevent feedback loops
-        self.command_origin_tracking = {}
-        self.last_commands = {}  # Track last command time per device
-        self.min_command_interval = 2  # Minimum seconds between commands to same device
-        self.pending_sends = {}  # device name -> timer handle of a delayed command
+        self.run_every(self.check_devices_file, "now+30", 30)
+
+    def terminate(self):
+        self.sock.close()
 
     def init_listeners(self):
         """
-        Creats 'on value changed' listeners for all the inputs representations of devices state.
-        a change in input state will cause a change in the represented device.
+        Creates 'on value changed' listeners for all the helpers that represent devices.
+        A change in a helper changes the device it represents.
         """
-        for device in devices_arr:
-            self.listen_state(self.on_off if device['input_type'] == 'input_boolean' else self.curtain_set, f"{device['input_type']}.{device['name']}")
+        for handle in self.listener_handles:
+            self.cancel_listen_state(handle)
+        self.listener_handles = [
+            self.listen_state(self.on_change, f"{device['input_type']}.{device['name']}",
+                              input_type=device['input_type'])
+            for device in devices_arr]
 
-    def on_off(self, entity, attribute, old, new, kwargs):
+    def check_devices_file(self, kwargs):
         """
-        Sends a status change message to device represented by input_boolean
+        Reloads mox_devices.yaml when it was saved, and listens to the new helpers.
         """
-        self.device = entity.split('.')[1]
+        reloaded, error = mox_devices.reload_if_changed()
+        if error:
+            self.log(f"mox_devices.yaml not reloaded, keeping the previous device list: {error}",
+                     log="mox_log", level="WARNING")
+        elif reloaded:
+            self.init_listeners()
+            self.log(f"mox_devices.yaml reloaded: {len(devices_arr)} devices", log="mox_log")
 
-        # Check if this change was caused by status update from MOX (feedback prevention)
-        if hasattr(self, 'status_update_in_progress') and self.status_update_in_progress.get(self.device, False):
-            self.log(f'Ignoring state change for {self.device} - caused by status update', log="mox_log")
-            return
-            
-        # Check if the state actually changed
-        if old == new:
-            self.log(f'Ignoring state change for {self.device} - no actual change', log="mox_log")
-            return
-
-        # Check if new state is valid
-        if new not in ['on', 'off']:
-            self.log(f'Invalid state for {self.device}: {new}', log="mox_log")
-            return
-
-        self.send_or_delay(self.device, 'input_boolean')
-
-    def curtain_set(self, entity, attribute, old, new, kwargs):
+    def on_change(self, entity, attribute, old, new, kwargs):
         """
-        Sends a status change message to device represented by input_number
+        A helper changed: send the new state to its Mox device.
         """
-        self.curtain = entity.split('.')[1]
+        name = entity.split('.', 1)[1]
+        input_type = kwargs['input_type']
 
-        # Check if this change was caused by status update from MOX (feedback prevention)
-        if hasattr(self, 'status_update_in_progress') and self.status_update_in_progress.get(self.curtain, False):
-            self.log(f'Ignoring curtain change for {self.curtain} - caused by status update', log="mox_log")
+        value = parse_value(input_type, new)
+        if value is None:
+            self.log(f'Invalid state for {name}: {new}', log="mox_log")
             return
-            
-        # Validate and convert the new value
-        try:
-            self.percent = int(float(new))
-            if self.percent < 0 or self.percent > 100:
-                self.log(f'Invalid curtain percentage for {self.curtain}: {self.percent}', log="mox_log")
-                return
-        except (ValueError, TypeError):
-            self.log(f'Invalid curtain value for {self.curtain}: {new}', log="mox_log")
-            return
-        
-        # Check if the percentage actually changed significantly (avoid micro-adjustments)
-        if old is not None:
-            try:
-                old_percent = int(float(old))
-                if abs(self.percent - old_percent) < 2:  # Less than 2% change
-                    self.log(f'Ignoring minor curtain change for {self.curtain}: {old_percent}% -> {self.percent}%', log="mox_log")
-                    return
-            except (ValueError, TypeError):
-                pass  # Continue if old value is invalid
 
-        self.send_or_delay(self.curtain, 'input_number')
+        if same_value(input_type, value, self.mox_state.get(name)):
+            self.log(f'Ignoring change for {name} to {new} - Mox is already {self.mox_state.get(name)}',
+                     log="mox_log")
+            return
+
+        self.send_or_delay(name, input_type)
+
+    def note_mox_state(self, name, value):
+        """
+        Called by mox_status_requester with each state change Mox reports, before it
+        updates the helper, so the helper change isn't sent back to Mox.
+        """
+        self.mox_state[name] = value
 
     def send_or_delay(self, name, input_type):
         """
@@ -139,54 +133,42 @@ class Mox_control(hass.Hass):
         """
         Reads the helper's current state and sends it to the matching Mox device.
         """
+        device = get_device_by_name(name)
+        if not device:
+            return  # removed from mox_devices.yaml
         state = self.get_state(f'{input_type}.{name}')
-        if input_type == 'input_boolean':
-            if state not in ('on', 'off'):
-                self.log(f'Invalid state for {name}: {state}', log="mox_log")
-                return
-            MESSAGE = switch_message(name, state == 'on')
-            log_text = f'Command sent: setting {name} {state}'
-        else:
-            try:
-                percent = int(float(state))
-            except (ValueError, TypeError):
-                self.log(f'Invalid curtain value for {name}: {state}', log="mox_log")
-                return
-            if percent < 0 or percent > 100:
-                self.log(f'Invalid curtain percentage for {name}: {percent}', log="mox_log")
-                return
-            MESSAGE = curtain_message(name, percent)
-            log_text = f'Curtain command sent: changing {name} to {percent} percent'
+        value = parse_value(input_type, state)
+        if value is None:
+            self.log(f'Invalid state for {name}: {state}', log="mox_log")
+            return
+        if same_value(input_type, value, self.mox_state.get(name)):
+            return  # changed back while the command was delayed
 
-        self.sock.sendto(MESSAGE, (UDP_IP, UDP_PORT))
+        if input_type == 'input_boolean':
+            message = switch_message(device, value == 'on')
+            log_text = f'Command sent: setting {name} {value}'
+        else:
+            message = curtain_message(device, value)
+            log_text = f'Curtain command sent: changing {name} to {value} percent'
+
+        self.sock.sendto(message, (gateway['ip'], gateway['port']))
         self.last_commands[name] = time.time()
+        self.mox_state[name] = value
         self.log(log_text, log="mox_log")
 
-    def recover_state(self, entity):
+    def recover_state(self, kwargs):
         """
-        Restores on/off devices state after elctricity break.
+        Restores on/off devices after a power cut, while RECOVER_SENSOR is on.
         """
-        if self.get_state("binary_sensor.jewish_calendar_issur_melacha_in_effect_2") == 'on':
-            on_off_devices = list(filter(lambda x: x['input_type'] == 'input_boolean', devices_arr))
-
-            for device in on_off_devices:
-                status = self.get_state(f'input_boolean.{device["name"]}')
-                
-                if status == 'on':
-                    # CRITICAL FIX: Add delay between recovery commands to prevent overload
-                    current_time = time.time()
-                    last_command_time = self.last_commands.get(device["name"], 0)
-                    if current_time - last_command_time >= self.min_command_interval:
-                        MESSAGE = switch_message(device["name"], True)
-                        self.sock.sendto(MESSAGE, (UDP_IP, UDP_PORT))
-                        self.last_commands[device["name"]] = current_time
-                        time.sleep(0.1)  # Small delay between commands
-    
-    # NEW METHOD: Allow status requester to signal when it's updating states
-    def set_status_update_flag(self, device_name, is_updating):
-        """
-        Called by status requester to prevent feedback loops
-        """
-        if not hasattr(self, 'status_update_in_progress'):
-            self.status_update_in_progress = {}
-        self.status_update_in_progress[device_name] = is_updating
+        if self.get_state(RECOVER_SENSOR) != 'on':
+            return
+        for device in [d for d in devices_arr if d['input_type'] == 'input_boolean']:
+            name = device['name']
+            if self.get_state(f'input_boolean.{name}') != 'on':
+                continue
+            if time.time() - self.last_commands.get(name, 0) < self.min_command_interval:
+                continue
+            self.sock.sendto(switch_message(device, True), (gateway['ip'], gateway['port']))
+            self.last_commands[name] = time.time()
+            self.mox_state[name] = 'on'
+            time.sleep(0.1)  # small delay between commands

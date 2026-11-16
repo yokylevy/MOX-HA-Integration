@@ -1,27 +1,21 @@
 import appdaemon.plugins.hass.hassapi as hass
-from mox_devices import *
-import json
+from mox_devices import devices_arr, gateway, get_device_by_name, get_device_by_controller
+from mox_protocol import status_request, parse_status, switch_value, curtain_value
 import socket
 import threading
 import time
 
-#MOX IP & Port
-UDP_IP = "172.16.254.254"
-UDP_PORT = 6670
-LISTEN_PORT = 6666  # Mox Gateway sends status replies to this port
 
 class Mox_status_requester(hass.Hass):
     def initialize(self):
-        # FIXED: Combined both initialize methods into one
-        self.devices_len = len(devices_arr)
-        self.device_num = 0
+        self.device_num = 0  # next device to poll
 
         # The socket is opened here and closed in terminate(), so AppDaemon can
-        # reload this app after an edit without "Address already in use" on 6666.
+        # reload this app after an edit without "Address already in use".
         self.stop_event = threading.Event()
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.sock.bind(('0.0.0.0', LISTEN_PORT))
+        self.sock.bind(('0.0.0.0', gateway['listen_port']))
         self.sock.settimeout(1.0)  # lets the receive loop notice stop_event
 
         # Gateway online sensor: binary_sensor.mox_gateway_online turns off when no
@@ -34,21 +28,18 @@ class Mox_status_requester(hass.Hass):
         self.gateway_published = 0    # when it was last published
         self.run_every(self.check_gateway, "now+10", 60)
 
+        # Last state Mox reported for each device. Only changes are passed on, so a
+        # late report of the old state can't undo a command just sent from HA.
+        self.device_states = {}
+
         self.run_every(self.poke_mox_servar, "now", 30)
-        #self.run_every(self.request_all_device_status, "now", 60)
-        self.status_thread = threading.Thread(target = self.get_status)
-        self.status_thread.daemon = True  # Dies when main thread dies
+        self.status_thread = threading.Thread(target=self.get_status, daemon=True)
         self.status_thread.start()
-        
-        # CRITICAL FIX: Track device states to prevent unnecessary updates
-        self.device_states = {}  # Track last known state for each device
-        self.last_status_update = {}  # Track when each device was last updated
-        self.min_update_interval = 1  # Minimum seconds between state updates
-        
+
         # Register service calls for manual triggering
         self.register_service("mox_control/request_all_status", self.service_request_all_status)
         self.register_service("mox_control/request_device_status", self.service_request_device_status)
-        
+
         # Listen for refresh button press
         self.listen_state(self.on_refresh_button, "input_boolean.refresh_mox_status", new="on")
 
@@ -58,10 +49,10 @@ class Mox_status_requester(hass.Hass):
         """
         self.log("Manual refresh triggered via input_boolean", log="mox_log")
         self.request_all_device_status()
-        
+
         # Turn the button back off after a short delay
         self.run_in(lambda kwargs: self.turn_off("input_boolean.refresh_mox_status"), 2)
-            
+
     def service_request_all_status(self, namespace, domain, service, kwargs):
         """
         Service call handler for requesting all device status
@@ -69,7 +60,7 @@ class Mox_status_requester(hass.Hass):
         """
         self.log("Service call: Requesting all device status", log="mox_log")
         self.request_all_device_status()
-        
+
     def service_request_device_status(self, namespace, domain, service, kwargs):
         """
         Service call handler for requesting specific device status
@@ -82,41 +73,31 @@ class Mox_status_requester(hass.Hass):
         else:
             self.log("Service call error: device_name parameter missing", log="mox_log")
 
-    def status_message(self, device):
-        """
-        Creates status message to send to Mox Gateway.
-        :param device: the requested device.
-        :ptype device: dictionary. 
-        :retuens: the message to be sent.
-        :rtype: byte array 
-        """
-        # Initializing devices access variables.
-        controller = format(device['controller'], 'x').zfill(6)
-        message = f"02{controller}{format(device['port'], 'x').zfill(2)}0100000102"
-        return bytes.fromhex(message)
+    def send(self, message):
+        self.sock.sendto(message, (gateway['ip'], gateway['port']))
 
-    def poke_mox_servar(self, entity):
+    def poke_mox_servar(self, kwargs):
         """
         Pinging the Mox Gateway with devices status, to make it send us status continuously
-        Remark: It doesn't matter which device is sent.
+        Remark: It doesn't matter which device is sent. Takes each device in turn.
         """
-        MESSAGE = self.status_message(devices_arr[self.device_num])
-        self.device_num = (self.device_num + 1) if self.device_num < self.devices_len - 2 else 0
-        self.sock.sendto(MESSAGE, (UDP_IP, UDP_PORT))
-        
+        index = self.device_num % len(devices_arr)
+        self.device_num = index + 1
+        self.send(status_request(devices_arr[index]))
+
     def get_status(self):
         """
-        Reads devices status from socket and calls the update procedure to update the HA variables.
+        Receive thread: reads status messages from the socket and hands each one to
+        AppDaemon (run_in), so the Home Assistant updates run on the app's own thread,
+        one at a time, like every other callback.
         """
         while not self.stop_event.is_set():
             try:
-                data = ''
                 data = self.sock.recv(1024)
-                sdata = str(data)
-                if len(data) > 10 and sdata.startswith("b'\\x03"):
+                if parse_status(data):
                     self.last_message = time.time()
                     self.messages_received += 1
-                    self.status_intpeter(data)
+                    self.run_in(self.handle_status, 0, packet=data.hex())
             except socket.timeout:
                 continue
             except Exception as e:
@@ -124,6 +105,53 @@ class Mox_status_requester(hass.Hass):
                     break  # socket was closed by terminate()
                 self.log(f"Error in get_status: {e}", log="mox_log")
                 time.sleep(1)  # Prevent tight error loops
+
+    def handle_status(self, kwargs):
+        """
+        Updates the device's helper from a status message, if the device changed.
+        """
+        controller, port, status = parse_status(bytes.fromhex(kwargs['packet']))
+        device = get_device_by_controller(controller, port)
+        if not device:
+            return
+        name = device['name']
+        is_curtain = device['input_type'] == 'input_number'
+
+        if is_curtain:
+            value = curtain_value(status)
+            last = self.device_states.get(name)
+            if last is not None and abs(last - value) < 2:  # less than 2% change
+                return
+        else:
+            value = switch_value(status)
+            if self.device_states.get(name) == value:
+                return
+        self.device_states[name] = value
+
+        # Tell mox_control first, so the helper change below isn't sent back to Mox.
+        mox_control_app = self.get_app("mox_control")
+        if mox_control_app and hasattr(mox_control_app, 'note_mox_state'):
+            mox_control_app.note_mox_state(name, value)
+
+        entity = f"{device['input_type']}.{name}"
+        current = self.get_state(entity)
+        label = f"{name} ({device['controller']}-{device['port']})"
+        if is_curtain:
+            try:
+                if abs(float(current) - value) < 2:
+                    return
+            except (TypeError, ValueError):
+                pass
+            self.log(f'{label} {value}%', log="mox_log")
+            self.call_service('input_number/set_value', entity_id=entity, value=value)
+        else:
+            if current == value:
+                return
+            if value == 'on':
+                self.turn_on(entity)
+            else:
+                self.turn_off(entity)
+            self.log(f'{label} {value}', log="mox_log")
 
     def check_gateway(self, kwargs):
         """
@@ -165,106 +193,11 @@ class Mox_status_requester(hass.Hass):
 
     def terminate(self):
         """
-        Called by AppDaemon when the app stops or reloads: stop the receive thread and free port 6666.
+        Called by AppDaemon when the app stops or reloads: stop the receive thread and free the port.
         """
         self.stop_event.set()
         self.status_thread.join(timeout=3)
         self.sock.close()
-
-    def status_intpeter(self, status):
-        """
-        Intrperates status and updates HA varibles with the status values.
-        :param status: the string of device status recived from Mox Gateway.
-        :ptype status: string.
-        """
-        self.device = {}
-        controller = 0
-        port = 0
-        s = ''
-
-        for byte in status:
-            s += str((format(byte, "x"))).zfill(2)
-        
-        status = s
-        
-        if not status.startswith('03'):
-            return
-
-        self.device = get_device_by_status(status)
-
-        if not 'name' in self.device.keys():
-            return
-        
-        self.device_name = self.device['name']
-        
-        # IMPROVED: Better anti-flicker logic with rate limiting
-        current_time = time.time()
-        
-        # Check if we updated this device too recently (prevents feedback loops)
-        last_update_time = self.last_status_update.get(self.device_name, 0)
-        if current_time - last_update_time < self.min_update_interval:
-            return
-
-        if 'curtain' in self.device["name"]:
-            percent = int(status[-4:-2], 16)
-            
-            # Check if this is actually a state change
-            current_state = self.device_states.get(self.device_name, -1)
-            if abs(current_state - percent) < 2:  # Less than 2% change
-                return
-            
-            # CRITICAL FIX: Signal to mox_control that we're updating state
-            mox_control_app = self.get_app("mox_control")
-            if mox_control_app and hasattr(mox_control_app, 'set_status_update_flag'):
-                mox_control_app.set_status_update_flag(self.device_name, True)
-            
-            self.log(f'{self.device["name"]} ({self.device["controller"]}-{self.device["port"]}) {percent}%', log="mox_log")
-            self.call_service('input_number/set_value', entity_id = f'input_number.{self.device["name"]}', value = percent)
-            self.device_states[self.device_name] = percent
-            
-            # Clear the update flag after a short delay.
-            # Bind the name now: self.device_name may belong to another device by the time this runs.
-            if mox_control_app and hasattr(mox_control_app, 'set_status_update_flag'):
-                name = self.device_name
-                self.run_in(lambda kwargs, name=name: mox_control_app.set_status_update_flag(name, False), 0.5)
-
-        else:
-            is_on = status[-1] == '1'
-            current_state_str = 'on' if is_on else 'off'
-            
-            # Check if this is actually a state change
-            last_state = self.device_states.get(self.device_name, None)
-            if last_state == current_state_str:
-                return
-            
-            # Get current HA state to avoid unnecessary updates
-            current_ha_state = self.get_state(f'input_boolean.{self.device_name}')
-            if current_ha_state == current_state_str:
-                self.device_states[self.device_name] = current_state_str
-                return
-            
-            # CRITICAL FIX: Signal to mox_control that we're updating state
-            mox_control_app = self.get_app("mox_control")
-            if mox_control_app and hasattr(mox_control_app, 'set_status_update_flag'):
-                mox_control_app.set_status_update_flag(self.device_name, True)
-            
-            self.boolean_var = f'input_boolean.{self.device["name"]}'
-            if is_on:
-                self.turn_on(self.boolean_var)
-            else:
-                self.turn_off(self.boolean_var)
-                
-            self.device_states[self.device_name] = current_state_str
-            self.log(f'{self.device["name"]} ({self.device["controller"]}-{self.device["port"]}) {current_state_str}', log="mox_log")
-            
-            # Clear the update flag after a short delay.
-            # Bind the name now: self.device_name may belong to another device by the time this runs.
-            if mox_control_app and hasattr(mox_control_app, 'set_status_update_flag'):
-                name = self.device_name
-                self.run_in(lambda kwargs, name=name: mox_control_app.set_status_update_flag(name, False), 0.5)
-
-        # Update the last update time
-        self.last_status_update[self.device_name] = current_time
 
     def request_all_device_status(self):
         """
@@ -272,14 +205,12 @@ class Mox_status_requester(hass.Hass):
         Call this method to get current status of all devices.
         """
         self.log("Requesting status for all devices", log="mox_log")
-        
-        for device in devices_arr:
-            MESSAGE = self.status_message(device)
-            self.sock.sendto(MESSAGE, (UDP_IP, UDP_PORT))
+        devices = list(devices_arr)
+        for device in devices:
+            self.send(status_request(device))
             time.sleep(0.1)  # Small delay between requests to avoid overwhelming the gateway
-            
-        self.log(f"Status requested for {len(devices_arr)} devices", log="mox_log")
-        
+        self.log(f"Status requested for {len(devices)} devices", log="mox_log")
+
     def request_device_status(self, device_name):
         """
         Requests status for a specific device from MOX Gateway.
@@ -289,27 +220,21 @@ class Mox_status_requester(hass.Hass):
         if not device:
             self.log(f"Device not found: {device_name}", log="mox_log")
             return False
-            
-        MESSAGE = self.status_message(device)
-        self.sock.sendto(MESSAGE, (UDP_IP, UDP_PORT))
+        self.send(status_request(device))
         self.log(f"Status requested for device: {device_name}", log="mox_log")
         return True
-    
+
     def request_controller_status(self, controller_id):
         """
         Requests status for all devices on a specific controller.
         :param controller_id: Controller ID (e.g., 200, 201, etc.)
         """
         controller_devices = [device for device in devices_arr if device['controller'] == controller_id]
-        
         if not controller_devices:
             self.log(f"No devices found for controller: {controller_id}", log="mox_log")
             return False
-            
         for device in controller_devices:
-            MESSAGE = self.status_message(device)
-            self.sock.sendto(MESSAGE, (UDP_IP, UDP_PORT))
+            self.send(status_request(device))
             time.sleep(0.05)  # Smaller delay for same controller
-            
         self.log(f"Status requested for {len(controller_devices)} devices on controller {controller_id}", log="mox_log")
         return True

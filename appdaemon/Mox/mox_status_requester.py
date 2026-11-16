@@ -24,6 +24,16 @@ class Mox_status_requester(hass.Hass):
         self.sock.bind(('0.0.0.0', LISTEN_PORT))
         self.sock.settimeout(1.0)  # lets the receive loop notice stop_event
 
+        # Gateway online sensor: binary_sensor.mox_gateway_online turns off when no
+        # Mox message has arrived for offline_after seconds (apps.yaml, default 600).
+        self.offline_after = int(self.args.get('offline_after', 600))
+        self.started = time.time()
+        self.last_message = None      # time of the last Mox status message received
+        self.messages_received = 0
+        self.gateway_online = None    # last state published to Home Assistant
+        self.gateway_published = 0    # when it was last published
+        self.run_every(self.check_gateway, "now+10", 60)
+
         self.run_every(self.poke_mox_servar, "now", 30)
         #self.run_every(self.request_all_device_status, "now", 60)
         self.status_thread = threading.Thread(target = self.get_status)
@@ -104,6 +114,8 @@ class Mox_status_requester(hass.Hass):
                 data = self.sock.recv(1024)
                 sdata = str(data)
                 if len(data) > 10 and sdata.startswith("b'\\x03"):
+                    self.last_message = time.time()
+                    self.messages_received += 1
                     self.status_intpeter(data)
             except socket.timeout:
                 continue
@@ -112,6 +124,44 @@ class Mox_status_requester(hass.Hass):
                     break  # socket was closed by terminate()
                 self.log(f"Error in get_status: {e}", log="mox_log")
                 time.sleep(1)  # Prevent tight error loops
+
+    def check_gateway(self, kwargs):
+        """
+        Publishes binary_sensor.mox_gateway_online: on while Mox messages keep arriving,
+        off when none has arrived for offline_after seconds. Published when the state
+        changes, and every 10 minutes so the sensor comes back after a Home Assistant restart.
+        """
+        now = time.time()
+        last = self.last_message
+        if last is None and now - self.started < self.offline_after:
+            return  # just started: give the gateway time to answer before judging
+        online = last is not None and now - last < self.offline_after
+
+        if online != self.gateway_online:
+            if self.gateway_online is not None or not online:
+                self.log(f"Mox gateway is {'online' if online else 'OFFLINE'}"
+                         f" (last message {self.format_time(last)})", log="mox_log")
+        elif now - self.gateway_published < 600:
+            return
+
+        self.set_state("binary_sensor.mox_gateway_online",
+                       state="on" if online else "off",
+                       attributes={
+                           "friendly_name": "Mox gateway",
+                           "device_class": "connectivity",
+                           "last_message": self.format_time(last),
+                           "messages_received": self.messages_received,
+                           "offline_after_seconds": self.offline_after,
+                       })
+        self.gateway_online = online
+        self.gateway_published = now
+
+    @staticmethod
+    def format_time(timestamp):
+        """
+        Local time as 'YYYY-MM-DD HH:MM:SS', or 'never'.
+        """
+        return time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(timestamp)) if timestamp else 'never'
 
     def terminate(self):
         """

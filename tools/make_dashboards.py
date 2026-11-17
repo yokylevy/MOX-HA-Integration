@@ -80,7 +80,8 @@ def main_page(config):
 
 def room_page(config, room):
     out = header(room['title'], config.get('skin', 'mox_glass'))
-    out += widget('home', ["widget_type: navigate", 'title: ""', f"dashboard: {config.get('main', 'Main')}",
+    out += widget('home', ["widget_type: navigate", f"title: {quote(config.get('home_title', 'Home'))}",
+                           f"dashboard: {config.get('main', 'Main')}",
                            "icon_inactive: mdi-home"])
     out += widget('page_title', ["widget_type: label", f"text: {quote(room['title'])}"])
     tiles, curtains = [], []

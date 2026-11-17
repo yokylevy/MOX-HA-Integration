@@ -4,6 +4,7 @@
 # and copy out/*.dash to the AppDaemon add-on's dashboards folder.
 main: Main            # file name of the main page
 title: Our home
+home_title: Home    # label of the button back to the main page
 skin: mox_glass       # open the pages with ?skin=mox_glass, e.g. http://homeassistant:5050/Main?skin=mox_glass
 rooms:
   - id: Living        # page file name: letters, digits or _

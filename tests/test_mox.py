@@ -61,6 +61,10 @@ class ProtocolTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             mox_protocol.curtain_message(CURTAIN, 101)
 
+    def test_curtain_stop_message(self):  # captured from a Mox wall switch
+        self.assertEqual(mox_protocol.curtain_stop_message({'controller': 400, 'port': 18}).hex(),
+                         '07000190120200000402')
+
     def test_status_request(self):
         self.assertEqual(mox_protocol.status_request(OFFICE_LIGHT).hex(), '020000c9110100000102')
 
@@ -302,7 +306,7 @@ class MqttTests(unittest.TestCase):
         self.assertEqual((ac['device']['name'], ac['icon']), ('מזגן ממד', 'mdi:air-conditioner'))
         cover = self.config('homeassistant/cover/mox_living_room_curtain/config')
         self.assertEqual(cover['set_position_topic'], 'mox/living_room_curtain/set_position')
-        self.assertIsNone(cover['payload_stop'])
+        self.assertEqual(cover['payload_stop'], 'STOP')
         self.assertEqual(self.mqtt.retained['mox/bridge/status'], 'online')
         self.assertEqual(self.mqtt.retained['mox/gateway/status'], 'online')
 
@@ -326,12 +330,37 @@ class MqttTests(unittest.TestCase):
     def test_bad_commands_are_ignored(self):
         for topic, payload in (('mox/office_ac/set', 'maybe'), ('mox/nothing/set', 'ON'),
                                ('mox/living_room_curtain/set_position', '150'),
-                               ('mox/living_room_curtain/set', 'STOP'), ('other/office_ac/set', 'ON'),
+                               ('mox/office_ac/set', 'STOP'), ('other/office_ac/set', 'ON'),
                                ('mox/office_ac/set_position', '50')):
             self.mqtt.receive(topic, payload)
         self.assertEqual(self.states['input_boolean.office_ac'], 'off')
         self.assertEqual(self.states['input_number.living_room_curtain'], '40.0')
         self.assertEqual(self.control.sock.sent, [])
+
+    def test_stop_and_open_again(self):
+        requester = Mox_status_requester(states=self.states)
+        requester.device_states, requester.away_switch, requester.started = {}, None, 0
+        requester.sock = FakeSocket()
+        Hass.apps['mox_status_requester'] = requester
+        self.mqtt.receive('mox/living_room_curtain/set', 'OPEN')       # 40 -> 100
+        self.assertEqual(self.control.sock.sent[-1][0], '030001911101000002046400')
+        self.mqtt.receive('mox/living_room_curtain/set', 'STOP')
+        self.assertEqual(self.control.sock.sent[-1][0], '07000191110200000402')
+        for cb, delay, kwargs in [t for t in self.control.timers if t[2].get('device') == 'living_room_curtain']:
+            cb(kwargs)                                                  # status requested
+        self.assertEqual(requester.sock.sent[-1][0], '020001911101000001' '02')
+        self.control.last_commands.clear()                              # 2 s later
+        self.mqtt.receive('mox/living_room_curtain/set', 'OPEN')       # helper still 100: sent anyway
+        self.assertEqual(self.control.sock.sent[-1][0], '030001911101000002046400')
+
+    def test_stop_cancels_a_delayed_command(self):
+        self.mqtt.receive('mox/living_room_curtain/set_position', '70')
+        self.mqtt.receive('mox/living_room_curtain/set_position', '20')  # delayed (rate limit)
+        self.mqtt.receive('mox/living_room_curtain/set', 'STOP')
+        for cb, delay, kwargs in list(self.control.timers):
+            cb(kwargs)
+        self.assertEqual([m for m, _ in self.control.sock.sent],
+                         ['030001911101000002044600', '07000191110200000402'])
 
     def test_gateway_offline_makes_entities_unavailable(self):
         self.states[GATEWAY] = 'off'

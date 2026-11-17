@@ -89,6 +89,9 @@ class Hass:
         self.timers.append((cb, delay, kwargs))
         return len(self.timers)
 
+    def cancel_timer(self, handle):
+        self.timers[handle - 1] = (lambda kwargs: None, 0, {})
+
     def run_every(self, *a, **k):
         pass
 

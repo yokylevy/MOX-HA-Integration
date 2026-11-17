@@ -78,7 +78,7 @@ class Mox_mqtt(hass.Hass):
             config.update({
                 'device_class': 'shutter',
                 'command_topic': f"{base}/set",
-                'payload_stop': None,  # Mox curtains have no stop command
+                'payload_stop': 'STOP',
                 'position_topic': f"{base}/position",
                 'set_position_topic': f"{base}/set_position",
                 'optimistic': False,
@@ -196,11 +196,28 @@ class Mox_mqtt(hass.Hass):
                     value = int(float(payload))
                 except ValueError:
                     return
+            elif payload == 'STOP':
+                control = self.get_app("mox_control")
+                if control:
+                    control.stop_curtain(device['name'])
+                    self.log(f"MQTT command: {device['name']} STOP", log="mox_log")
+                return
             else:
                 value = {'OPEN': 100, 'CLOSE': 0}.get(payload)
             if value is None or not 0 <= value <= 100:
                 return
-            self.call_service('input_number/set_value', entity_id=entity, value=value)
+            try:
+                unchanged = round(float(self.get_state(entity))) == value
+            except (TypeError, ValueError):
+                unchanged = False
+            if unchanged:
+                # The helper already shows this target (for example after a stop), so
+                # setting it again changes nothing: ask mox_control to send it anyway.
+                control = self.get_app("mox_control")
+                if control:
+                    control.send_or_delay(device['name'], 'input_number')
+            else:
+                self.call_service('input_number/set_value', entity_id=entity, value=value)
         elif what == 'set':
             if payload == 'ON':
                 self.turn_on(entity)

@@ -31,6 +31,7 @@ The gateway listens on UDP port **6670**. Each Mox controller has a number and 8
 |---------|--------------|
 | Switch on/off | `03` + controller (6 digits) + output (2) + `0100000203` + `01` on / `00` off |
 | Set curtain | `03` + controller (6) + output (2) + `0100000204` + position (2) + `00` |
+| Stop curtain | `07` + controller (6) + output (2) + `0200000402` (the message a Mox wall switch sends) |
 | Request status | `02` + controller (6) + output (2) + `0100000102` |
 
 Status replies start with `03` (for an on/off output: `03` + controller + output + `0100000303` + `01` on / `00` off) and are sent to UDP port **6666** on the Home Assistant host. After it receives a request, the gateway keeps reporting device status for a few minutes and reports every change immediately, which is why the requester polls every 30 seconds.
@@ -85,7 +86,7 @@ mox_status_requester:
 
 ### Optional: real lights, fans, switches and curtains (MQTT)
 
-The helpers work everywhere in Home Assistant, but voice assistants and "turn off all the lights" only know them as generic switches. The `mox_mqtt` app also publishes every device through [MQTT discovery](https://www.home-assistant.io/integrations/mqtt/#mqtt-discovery) as a proper entity: `light.<name>`, `fan.<name>`, `switch.<name>` or `cover.<name>` (curtains, with open, close and position). Each one is its own device, so it can be put in an area.
+The helpers work everywhere in Home Assistant, but voice assistants and "turn off all the lights" only know them as generic switches. The `mox_mqtt` app also publishes every device through [MQTT discovery](https://www.home-assistant.io/integrations/mqtt/#mqtt-discovery) as a proper entity: `light.<name>`, `fan.<name>`, `switch.<name>` or `cover.<name>` (curtains, with open, close, stop and position). Each one is its own device, so it can be put in an area.
 
 The helpers stay the source of truth: an MQTT entity follows its helper, and a command to it changes the helper, which `mox_control` sends to Mox as usual. Existing automations and dashboards keep working. When the gateway is offline (`binary_sensor.mox_gateway_online` off) or AppDaemon stops, the MQTT entities show as unavailable.
 

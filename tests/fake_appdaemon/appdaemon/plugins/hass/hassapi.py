@@ -34,6 +34,7 @@ class Hass:
     apps = {}  # name -> app, for get_app()
     mqtt = None  # set to a FakeMqtt to make get_plugin_api("MQTT") return it
     attributes = {}  # entity -> {attribute: value}
+    services = []    # every call_service: (service, entity_id, other arguments)
 
     def __init__(self, args=None, states=None):
         self.args = args or {}
@@ -72,6 +73,7 @@ class Hass:
         self._change(entity, 'off')
 
     def call_service(self, service, entity_id=None, value=None, **kw):
+        Hass.services.append((service, entity_id, kw))
         if service == 'input_number/set_value':
             self._change(entity_id, str(float(value)))
 

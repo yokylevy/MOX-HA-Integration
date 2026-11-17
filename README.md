@@ -16,6 +16,7 @@ Changing a helper in Home Assistant switches the real device, and using a wall s
 | `appdaemon/Mox/mox_control.py` | Listens for changes to the helpers and sends the matching command to the Mox gateway. A change that matches the state Mox last reported isn't sent (no feedback loops), and a second command to the same device within 2 seconds is delayed, never dropped. |
 | `appdaemon/Mox/mox_status_requester.py` | Polls the gateway every 30 seconds so it keeps reporting, listens for status messages and updates the helpers. Publishes `binary_sensor.mox_gateway_online`. |
 | `appdaemon/Mox/mox_mqtt.py` | Optional: publishes every device to Home Assistant through MQTT as a light, fan, switch or cover (see below). |
+| `appdaemon/Mox/mox_switches.py` | Optional: connects Mox wall switches to other covers, when their Mox controller was replaced (see below). |
 | `appdaemon/Mox/mox_protocol.py` | Builds the UDP messages and reads the status replies (see the table below). |
 | `appdaemon/Mox/mox_devices.py` | Loads and checks the device list and gateway address from `mox_data/mox_devices.yaml`, and reloads it when the file changes. |
 | `appdaemon/Mox/apps.yaml` | Registers the apps with AppDaemon. |
@@ -116,6 +117,27 @@ The helpers stay the source of truth: an MQTT entity follows its helper, and a c
 3. Optionally set `kind` (`light`, `fan` or `switch`, the default), `title` and `icon` for each on/off device in `mox_devices.yaml` (see the example file). Curtains are always covers. Changes are picked up within a minute; changing `title` or `icon` keeps the entity (and its area), changing `kind` replaces it.
 
 `mox.log` shows `MQTT command: <name> ON` for each command from an MQTT entity. Without the plugin the app only logs `MQTT plugin not configured` and does nothing. Topics: `mox/<name>/state`, `mox/<name>/set`, and for curtains `mox/<name>/position` and `mox/<name>/set_position` (change `mox` with `topic_prefix` in `apps.yaml`).
+
+### Optional: Mox wall switches for other curtains
+
+If a Mox curtain controller was replaced (for example by a KinCony F16 running ESPHome) but its Mox wall switches are still on the wall, the `mox_switches` app connects them to the new covers. `mox_status_requester` passes it every switch message the gateway sends.
+
+- **Buttons:** most Mox curtain switches send a press (`02` + controller + button + `0100000203` + `01`) and a release (`…02`). They behave like Mox curtains: hold to open or close fully, a short press in the opposite direction while the curtain moves stops it, and a short press while it's still moves it by `step` percent. This relies on the cover reporting `opening` / `closing` (ESPHome time-based covers do).
+- **Outputs:** some switches are programmed to command a curtain output directly (`03` … `0100000204` + position, and `07` … `0200000402` to stop). Those commands are passed to the cover.
+
+```yaml
+mox_switches:
+  module: mox_switches
+  class: Mox_switches
+  long_press: 0.6   # seconds held before it counts as a long press
+  step: 5           # percent moved by a short press
+  buttons:
+    - {controller: 400, up: 169, down: 170, cover: cover.bedroom_curtain}
+  outputs:
+    - {controller: 400, port: 18, cover: cover.kitchen_curtain}
+```
+
+To find a switch's numbers, run a small UDP listener on the network that sends the gateway a status request every second (the gateway reports to whoever asked last) and press each half of the switch a different number of times. Stop it afterwards, or Home Assistant won't receive the presses. `mox.log` shows `Wall switch 400-169: cover… open` for each action.
 
 ### Gateway online sensor and alert
 

@@ -25,6 +25,7 @@ import mox_protocol  # noqa: E402
 from appdaemon.plugins.hass.hassapi import Hass, FakeMqtt  # noqa: E402
 from mox_control import Mox_control  # noqa: E402
 from mox_mqtt import Mox_mqtt  # noqa: E402
+from mox_switches import Mox_switches  # noqa: E402
 from mox_status_requester import Mox_status_requester  # noqa: E402
 
 OFFICE_LIGHT = {'name': 'office_light', 'controller': 201, 'port': 17, 'input_type': 'input_boolean'}
@@ -397,6 +398,85 @@ class MqttTests(unittest.TestCase):
         app = Mox_mqtt(states=self.states)
         app.initialize()
         self.assertIn('MQTT plugin not configured', app.logs[0])
+
+
+
+KITCHEN, PARENTS, LEFT = 'cover.kitchen_east', 'cover.parents', 'cover.kitchen_right'
+
+
+class WallSwitchTests(unittest.TestCase):
+    """Mox wall switches driving other covers (captured messages from 2026-11-17)."""
+
+    def setUp(self):
+        mox_devices._apply(EXAMPLE)
+        Hass.apps.clear()
+        Hass.services = []
+        Hass.attributes = {KITCHEN: {'current_position': 40}, PARENTS: {'current_position': 3}}
+        self.states = {KITCHEN: 'open', PARENTS: 'open', LEFT: 'open'}
+        self.app = Mox_switches(states=self.states, args={
+            'buttons': [{'controller': 400, 'up': 145, 'down': 146, 'cover': KITCHEN},
+                        {'controller': 400, 'up': 169, 'down': 170, 'cover': PARENTS}],
+            'outputs': [{'controller': 400, 'port': 18, 'cover': LEFT}]})
+        self.app.initialize()
+        self.requester = Mox_status_requester(states=self.states)
+        self.requester.device_states, self.requester.away_switch, self.requester.started = {}, None, 0
+        Hass.apps.update(mox_switches=self.app, mox_status_requester=self.requester)
+
+    def tearDown(self):
+        Hass.attributes = {}
+
+    def send(self, packet):
+        self.app.timers.clear()
+        if packet.startswith('03'):
+            self.requester.handle_status({'packet': packet})  # unknown device: forwarded
+        else:
+            self.requester.forward({'packet': packet})
+        return list(self.app.timers)
+
+    def services(self):
+        return [(s, e, kw.get('position')) for s, e, kw in Hass.services]
+
+    def test_long_press_opens(self):
+        timers = self.send('0200019091010000020301')   # kitchen up pressed
+        self.assertEqual(self.services(), [])
+        cb, delay, kwargs = timers[0]
+        self.assertEqual(delay, 0.6)
+        cb(kwargs)                                      # still held after 0.6 s
+        self.send('0200019091010000020302')            # released
+        self.assertEqual(self.services(), [('cover/open_cover', KITCHEN, None)])
+
+    def test_short_press_moves_a_step(self):
+        timers = self.send('02000190aa010000020301')   # parents down pressed
+        self.send('02000190aa010000020302')            # released quickly
+        cb, _, kwargs = timers[0]
+        cb(kwargs)                                      # the long-press check finds it released
+        self.assertEqual(self.services(), [('cover/set_cover_position', PARENTS, 0)])  # 3% - 5, at least 0
+
+    def test_short_opposite_press_while_moving_stops(self):
+        self.states[KITCHEN] = 'opening'
+        self.send('0200019092010000020301')            # kitchen down pressed
+        self.send('0200019092010000020302')
+        self.assertEqual(self.services(), [('cover/stop_cover', KITCHEN, None)])
+
+    def test_repeated_press_is_ignored(self):
+        timers = self.send('0200019091010000020301')
+        self.send('0200019091010000020301')            # the gateway's repeat
+        self.send('0200019091010000020302')
+        timers[0][0](timers[0][2])
+        self.assertEqual(self.services(), [('cover/set_cover_position', KITCHEN, 45)])
+
+    def test_output_commands(self):
+        self.send('030001901201000002046400')          # left rocker: go to 100
+        self.send('030001901201000002046400')          # repeat
+        self.send('07000190120200000402')              # stop
+        self.assertEqual(self.services(), [('cover/set_cover_position', LEFT, 100),
+                                           ('cover/stop_cover', LEFT, None)])
+
+    def test_other_messages_are_ignored(self):
+        self.send('020000cab9010000020301')            # an unconfigured button
+        self.send('030001901301000002046400')          # an unconfigured output
+        self.send('02000191110100000102')              # a status request
+        self.assertEqual(self.services(), [])
 
 
 if __name__ == '__main__':

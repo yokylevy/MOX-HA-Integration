@@ -564,6 +564,7 @@ class ConfirmTests(AppTests):
 
 
 AC = 'input_boolean.parents_ac'
+FAN = 'input_boolean.parents_fan'
 
 
 class TimerTests(unittest.TestCase):
@@ -574,8 +575,11 @@ class TimerTests(unittest.TestCase):
             self.states[f'input_boolean.timer_parents_ac_{n}'] = 'off'
             self.states[f'input_datetime.timer_parents_ac_{n}_on'] = '00:00:00'
             self.states[f'input_datetime.timer_parents_ac_{n}_off'] = '00:00:00'
+        self.states.update({FAN: 'off', 'input_boolean.fan_swap_parents_ac': 'off'})
         self.app = Mox_timers(states=self.states, args={'devices': [AC], 'slots': 3,
-                                                        'away_switch': 'input_boolean.away_from_home'})
+                                                        'away_switch': 'input_boolean.away_from_home',
+                                                        'fans': {AC: FAN}})
+        Hass.apps['mox_timers'] = self.app
         self.app.initialize()
 
     def tearDown(self):
@@ -630,6 +634,26 @@ class TimerTests(unittest.TestCase):
         self.assertEqual(self.states[AC], 'on')
         self.at('10:00')
         self.assertEqual(self.states[AC], 'off')
+
+    def test_fan_swap(self):
+        self.states['input_boolean.fan_swap_parents_ac'] = 'on'
+        self.set_timer(1, '06:00', '08:00')
+        self.at('06:00')                       # AC on
+        self.assertEqual(self.states[FAN], 'off')
+        self.at('08:00')                       # AC off -> fan on
+        self.assertEqual(self.states[FAN], 'on')
+        self.app.turn_on(AC)                   # AC switched by hand -> fan off
+        self.assertEqual(self.states[FAN], 'off')
+
+    def test_fan_swap_off_or_away(self):
+        self.states[AC] = 'on'
+        self.app.turn_off(AC)                  # swap switch off: fan untouched
+        self.assertEqual(self.states[FAN], 'off')
+        self.states['input_boolean.fan_swap_parents_ac'] = 'on'
+        self.states['input_boolean.away_from_home'] = 'on'
+        self.app.turn_on(AC)
+        self.app.turn_off(AC)                  # away: fan not switched on
+        self.assertEqual(self.states[FAN], 'off')
 
     def test_overnight(self):
         self.set_timer(3, '22:00', '02:00')

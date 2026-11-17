@@ -51,6 +51,8 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(living['t1_3_off']['entity'], 'input_datetime.timer_central_ac_3_off')
         self.assertIn('t1_1(2x1), t1_1_on(3x1), t1_1_off(3x1)', living['layout'])
         self.assertIn('t1_1_on(2x1), t1_1_off(2x1)', self.page('Living_m')['layout'])
+        self.assertEqual(self.page('Office')['t2_fan']['entity'], 'input_boolean.fan_swap_office_ac')
+        self.assertNotIn('t1_fan', living)
         self.assertIn('m0(2x1), spacer(4x1)', main['layout'])
         self.assertIn('m0(2x1)', self.page('Main_m')['layout'])
 

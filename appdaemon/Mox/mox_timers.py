@@ -10,6 +10,10 @@ helpers, named after the device's object id:
 At an enabled timer's "on" time the device is switched on, at its "off" time off.
 While `away_switch` is on, "on" times are skipped ("off" times still run).
 
+Optional fan swap (`fans`, device -> fan): while input_boolean.fan_swap_<device name> is on,
+the fan is switched on when the device turns off, and off when the device turns on, however
+the device was switched. The fan isn't switched on while away.
+
 mox_timers:
   module: mox_timers
   class: Mox_timers
@@ -17,6 +21,8 @@ mox_timers:
   away_switch: input_boolean.away_from_home   # optional
   devices:
     - input_boolean.parents_ac
+  fans:                                         # optional
+    input_boolean.parents_ac: input_boolean.parents_fan
 """
 import appdaemon.plugins.hass.hassapi as hass
 
@@ -26,6 +32,9 @@ class Mox_timers(hass.Hass):
         self.slots = int(self.args.get('slots', 3))
         self.away_switch = self.args.get('away_switch')
         self.devices = list(self.args.get('devices') or [])
+        self.fans = dict(self.args.get('fans') or {})
+        for device in self.fans:
+            self.listen_state(self.device_changed, device)
         self.last_minute = None
         # Every 20 seconds, so a slow or skipped call never misses a minute; each minute runs once.
         self.run_every(self.check, "now", 20)
@@ -33,6 +42,7 @@ class Mox_timers(hass.Hass):
         missing = [h for d in self.devices for n in range(1, self.slots + 1)
                    for h in (self.helper(d, n), self.helper(d, n, 'on'), self.helper(d, n, 'off'))
                    if self.get_state(h) is None]
+        missing += [self.swap_switch(d) for d in self.fans if self.get_state(self.swap_switch(d)) is None]
         if missing:
             self.log(f"Timers: {len(missing)} helpers not found (create them, then restart "
                      f"AppDaemon), e.g. {', '.join(missing[:3])}", level="WARNING", log="mox_log")
@@ -46,6 +56,29 @@ class Mox_timers(hass.Hass):
         if kind is None:
             return f"input_boolean.timer_{name}_{n}"
         return f"input_datetime.timer_{name}_{n}_{kind}"
+
+    @staticmethod
+    def swap_switch(device):
+        return f"input_boolean.fan_swap_{device.split('.', 1)[1]}"
+
+    def device_changed(self, entity, attribute, old, new, kwargs):
+        """
+            Fan swap: the fan follows the opposite of the device, if its switch is on.
+        """
+        if (old, new) not in (('on', 'off'), ('off', 'on')):
+            return
+        if self.get_state(self.swap_switch(entity)) != 'on':
+            return
+        fan = self.fans[entity]
+        if new == 'off':
+            if self.away_switch and self.get_state(self.away_switch) == 'on':
+                return
+            if self.get_state(fan) != 'on':
+                self.turn_on(fan)
+                self.log(f"Fan swap: {entity} off, {fan} on", log="mox_log")
+        elif self.get_state(fan) != 'off':
+            self.turn_off(fan)
+            self.log(f"Fan swap: {entity} on, {fan} off", log="mox_log")
 
     def check(self, kwargs):
         minute = self.datetime().strftime('%H:%M')

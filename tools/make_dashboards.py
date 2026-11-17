@@ -23,7 +23,8 @@ rooms.yaml (see dashboards/rooms.example.yaml):
         devices:
           - light.living_room                         # title: the entity's friendly name
           - {entity: fan.office_fan, title: Fan}      # or a title of your own
-          - {entity: switch.office_ac, title: AC, icon: mdi-air-conditioner, timers: 3}  # daily timers
+          - {entity: switch.office_ac, title: AC, icon: mdi-air-conditioner, timers: 3,   # daily timers
+             fan_swap: true}   # switch: fan on when the AC goes off (mox_timers fans)
           - {entity: cover.living_room_curtain, title: Curtain}
 """
 import os
@@ -91,7 +92,7 @@ def timer_section(config, spec, base, variant):
         each timer its enable switch and its on and off times. Returns (layout rows, widget lines).
     """
     name = spec['entity'].split('.', 1)[1]
-    texts = {'label': 'Timers', 'timer': 'Timer', 'on': 'On', 'off': 'Off'}
+    texts = {'label': 'Timers', 'timer': 'Timer', 'on': 'On', 'off': 'Off', 'fan_swap': 'Fan when AC is off'}
     texts.update(config.get('timer_texts') or {})
     widgets = widget(f"{base}_label", ["widget_type: label",
                                        f"text: {quote(texts['label'] + ' - ' + spec.get('title', name))}",
@@ -109,6 +110,11 @@ def timer_section(config, spec, base, variant):
             rows += [f"    - {base}_{n}(4x1)", f"    - {base}_{n}_on(2x1), {base}_{n}_off(2x1)"]
         else:
             rows.append(f"    - {base}_{n}(2x1), {base}_{n}_on(3x1), {base}_{n}_off(3x1)")
+    if spec.get('fan_swap'):  # mox_timers' fan swap switch for this device
+        widgets += widget(f"{base}_fan", ["widget_type: switch", f"entity: input_boolean.fan_swap_{name}",
+                                          "icon_on: mdi-fan-auto", "icon_off: mdi-fan-auto",
+                                          f"title: {quote(texts['fan_swap'])}"])
+        rows.append(f"    - {base}_fan(4x1)")
     return rows, widgets
 
 

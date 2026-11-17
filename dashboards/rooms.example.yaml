@@ -24,4 +24,5 @@ rooms:
     devices:
       - light.office_light                                     # title: the entity's friendly name
       - {entity: fan.office_fan, title: Fan}
+      - {entity: switch.office_ac, title: AC, icon: mdi-air-conditioner, timers: 3, fan_swap: true}
       - {entity: cover.office_curtain, title: Curtain}

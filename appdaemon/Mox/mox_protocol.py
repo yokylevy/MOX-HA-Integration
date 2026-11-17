@@ -46,18 +46,38 @@ def status_request(device):
     return bytes.fromhex(f"02{address(device)}0100000102")
 
 
+# Bytes 5-9 of the two kinds of status reply (seen on a live gateway, 2026-11-17):
+#   on/off:  03 + address + 01 00 00 03 03 + 00/01            (11 bytes)
+#   curtain: 03 + address + 01 00 00 03 04 + position + 00    (12 bytes)
+# The gateway also passes on other clients' traffic, such as status requests
+# (starting 01 or 02) and wall button presses (02 + address + 01 00 00 02 03 + 01,
+# on a channel above 24). Those aren't statuses and are ignored.
+SWITCH_REPLY = bytes.fromhex('0100000303')
+CURTAIN_REPLY = bytes.fromhex('0100000304')
+
+
 def parse_status(data):
     """
         Reads a status reply from the gateway.
         :param data: the UDP payload.
         :type data: bytes
         :returns: (controller, port, hex string of the whole message), or None if
-                  it isn't a status message.
+                  it isn't a status reply.
     """
-    if len(data) <= 10 or data[0] != 0x03:
+    if not data or data[0] != 0x03:
+        return None
+    if not ((len(data) == 11 and data[5:10] == SWITCH_REPLY)
+            or (len(data) == 12 and data[5:10] == CURTAIN_REPLY)):
         return None
     s = data.hex()
-    return int(s[4:8], 16), int(s[8:10], 16), s
+    return int(s[2:8], 16), int(s[8:10], 16), s
+
+
+def is_curtain_status(status_hex):
+    """
+        True for a curtain reply, False for an on/off reply.
+    """
+    return status_hex[10:20] == CURTAIN_REPLY.hex()
 
 
 def switch_value(status_hex):

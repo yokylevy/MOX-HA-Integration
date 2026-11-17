@@ -41,11 +41,11 @@ class FakeSocket:
 
 
 def status_packet(device, value):
-    """A status reply as the gateway sends it."""
+    """A status reply as the gateway sends it (format seen on a live gateway)."""
     if device['input_type'] == 'input_number':
-        tail = f"0100000204{value:02x}00"
+        tail = f"0100000304{value:02x}00"
     else:
-        tail = f"0100000203{'01' if value == 'on' else '00'}"
+        tail = f"0100000303{'01' if value == 'on' else '00'}"
     return bytes.fromhex(f"03{mox_protocol.address(device)}{tail}")
 
 
@@ -72,6 +72,18 @@ class ProtocolTests(unittest.TestCase):
     def test_parse_status_ignores_other_messages(self):
         self.assertIsNone(mox_protocol.parse_status(mox_protocol.status_request(OFFICE_LIGHT)))
         self.assertIsNone(mox_protocol.parse_status(b'\x03\x00'))
+        self.assertIsNone(mox_protocol.parse_status(b''))
+        # Real messages from other clients, captured on the live gateway:
+        for other in ('010000dd790100000102',       # another client's status request
+                      '020001a599010000020301',     # a wall button press
+                      '030000c9110100000203' '01'):  # a command, not a status
+            self.assertIsNone(mox_protocol.parse_status(bytes.fromhex(other)), other)
+
+    def test_parse_real_replies(self):
+        self.assertEqual(mox_protocol.parse_status(bytes.fromhex('030000dd79010000030301'))[:2], (221, 121))
+        controller, port, s = mox_protocol.parse_status(bytes.fromhex('030001a51201000003043300'))
+        self.assertEqual((controller, port, mox_protocol.curtain_value(s)), (421, 18, 51))
+        self.assertTrue(mox_protocol.is_curtain_status(s))
 
 
 class DeviceFileTests(unittest.TestCase):
@@ -156,6 +168,8 @@ class AppTests(unittest.TestCase):
         self.requester.device_states = {}
         self.requester.device_num = 0
         self.requester.away_switch = None
+        self.requester.confirming = {}
+        self.requester.sock = FakeSocket()
         self.requester.started = time.time() - 300
         Hass.apps.update(mox_control=self.control, mox_status_requester=self.requester)
 
@@ -242,3 +256,62 @@ class AppTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ConfirmTests(AppTests):
+    """An on/off command is checked with Mox a moment later, and sent again if it was lost."""
+
+    def run_confirm_timer(self):
+        cb, delay, kwargs = self.control.timers[-1]
+        self.assertEqual(cb, self.control.confirm_command)
+        cb(kwargs)
+
+    def test_command_is_confirmed(self):
+        self.control.turn_on('input_boolean.office_light')
+        self.run_confirm_timer()
+        self.assertEqual(self.requester.sock.sent[-1][0], mox_protocol.status_request(OFFICE_LIGHT).hex())
+        self.receive(OFFICE_LIGHT, 'on')
+        self.assertEqual(len(self.control.sock.sent), 1)  # nothing sent again
+        self.assertEqual(self.states['input_boolean.office_light'], 'on')
+
+    def test_lost_command_is_sent_again(self):
+        self.receive(OFFICE_LIGHT, 'off')
+        self.control.turn_on('input_boolean.office_light')
+        self.run_confirm_timer()
+        self.receive(OFFICE_LIGHT, 'off')                 # Mox didn't switch
+        self.assertEqual(self.control.sock.sent[-1][0], '030000c9110100000203' '01')
+        self.assertEqual(len(self.control.sock.sent), 2)
+        self.run_confirm_timer()
+        self.receive(OFFICE_LIGHT, 'on')                  # worked the second time
+        self.assertEqual(len(self.control.sock.sent), 2)
+        self.assertEqual(self.states['input_boolean.office_light'], 'on')
+
+    def test_helper_shows_mox_state_after_two_failures(self):
+        self.requester.away_switch = 'input_boolean.away_from_home'
+        self.states['input_boolean.away_from_home'] = 'on'
+        self.receive(OFFICE_LIGHT, 'off')
+        self.control.turn_on('input_boolean.office_light')
+        self.run_confirm_timer()
+        self.receive(OFFICE_LIGHT, 'off')
+        self.run_confirm_timer()
+        self.receive(OFFICE_LIGHT, 'off')
+        self.assertEqual(self.states['input_boolean.office_light'], 'off')
+        self.assertEqual(len(self.control.sock.sent), 2)  # not sent a third time
+        self.assertEqual(self.states['input_boolean.away_from_home'], 'on')  # not a wall switch
+
+    def test_replaced_command_is_not_checked(self):
+        self.control.turn_on('input_boolean.office_light')
+        first = self.control.timers[-1]
+        self.control.turn_off('input_boolean.office_light')  # delayed by the rate limit
+        first[0](first[2])
+        self.assertEqual(self.requester.sock.sent, [])
+
+    def test_curtains_are_not_checked(self):
+        self.control.call_service('input_number/set_value', entity_id='input_number.living_room_curtain', value=80)
+        self.assertFalse(any(cb == self.control.confirm_command for cb, _, _ in self.control.timers))
+
+    def test_wrong_input_type_is_reported(self):
+        wrong = dict(OFFICE_LIGHT, input_type='input_number')
+        self.requester.handle_status({'packet': status_packet(wrong, 40).hex()})
+        self.assertEqual(self.states['input_boolean.office_light'], 'off')
+        self.assertTrue(any('Check input_type' in m for m in self.requester.logs))

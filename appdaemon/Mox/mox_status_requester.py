@@ -1,6 +1,6 @@
 import appdaemon.plugins.hass.hassapi as hass
 from mox_devices import devices_arr, gateway, get_device_by_name, get_device_by_controller
-from mox_protocol import status_request, parse_status, switch_value, curtain_value
+from mox_protocol import status_request, parse_status, switch_value, curtain_value, is_curtain_status
 import socket
 import threading
 import time
@@ -36,7 +36,14 @@ class Mox_status_requester(hass.Hass):
         # turned off whenever someone uses a wall switch, since someone is home.
         self.away_switch = self.args.get('away_switch')
 
+        # Device name -> (time asked, attempt) while mox_control waits for the answer
+        # that confirms a command it sent (see request_confirmation).
+        self.confirming = {}
+
         self.run_every(self.poke_mox_servar, "now", 30)
+        # Ask for every device once at start, so the helpers catch up in seconds
+        # instead of waiting for the 30-second round of polls.
+        self.run_in(self.request_all_on_start, 5)
         self.status_thread = threading.Thread(target=self.get_status, daemon=True)
         self.status_thread.start()
 
@@ -120,6 +127,21 @@ class Mox_status_requester(hass.Hass):
             return
         name = device['name']
         is_curtain = device['input_type'] == 'input_number'
+        if is_curtain != is_curtain_status(status):
+            self.log(f"{name} ({controller}-{port}) is listed as {device['input_type']} but Mox reports it as "
+                     f"{'a curtain' if is_curtain_status(status) else 'an on/off output'}. "
+                     f"Check input_type in mox_devices.yaml.", log="mox_log", level="WARNING")
+            return
+
+        confirming = self.confirming.pop(name, None)
+        if confirming and not is_curtain and time.time() - confirming[0] < 10:
+            # The answer to a confirmation request: mox_control decides what to do.
+            value = switch_value(status)
+            self.device_states[name] = value
+            mox_control_app = self.get_app("mox_control")
+            if mox_control_app and hasattr(mox_control_app, 'command_confirmed'):
+                mox_control_app.command_confirmed(name, value, confirming[1])
+            return
 
         if is_curtain:
             value = curtain_value(status)
@@ -214,6 +236,20 @@ class Mox_status_requester(hass.Hass):
         self.stop_event.set()
         self.status_thread.join(timeout=3)
         self.sock.close()
+
+    def request_all_on_start(self, kwargs):
+        self.request_all_device_status()
+
+    def request_confirmation(self, name, attempt):
+        """
+        Asks Mox for the state of a device that mox_control just switched. The answer
+        goes to mox_control.command_confirmed() instead of the usual handling.
+        """
+        device = get_device_by_name(name)
+        if not device:
+            return
+        self.confirming[name] = (time.time(), attempt)
+        self.send(status_request(device))
 
     def request_all_device_status(self):
         """

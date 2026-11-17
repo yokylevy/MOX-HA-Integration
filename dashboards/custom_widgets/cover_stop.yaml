@@ -1,0 +1,32 @@
+# Mox dashboards: a momentary button that calls cover.stop_cover (no state of its own).
+widget_type: baseswitch
+entity: "{{entity}}"
+state_active: "on"
+state_inactive: "off"
+enable: 1
+momentary: 400
+ignore_state: 1
+post_service_active:
+    service: cover/stop_cover
+    entity_id: "{{entity}}"
+post_service_inactive:
+    service: cover/stop_cover
+    entity_id: "{{entity}}"
+fields:
+  title: "{{title}}"
+  title2: "{{title2}}"
+  icon: ""
+  icon_style: ""
+  state_text: ""
+icons:
+  icon_on: mdi-stop
+  icon_off: mdi-stop
+static_icons: []
+css:
+  icon_style_active: "color: #ffc94d; font-size: 160%"
+  icon_style_inactive: "color: rgba(255,255,255,0.9); font-size: 160%"
+static_css:
+  title_style: $switch_title_style
+  title2_style: $switch_title2_style
+  state_text_style: "display: none"
+  widget_style: $switch_widget_style

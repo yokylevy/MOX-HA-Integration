@@ -3,7 +3,7 @@ import socket
 import appdaemon.plugins.hass.hassapi as hass
 import mox_devices
 from mox_devices import devices_arr, gateway, get_device_by_name
-from mox_protocol import switch_message, curtain_message
+from mox_protocol import switch_message, curtain_message, curtain_stop_message
 
 # While this sensor is on (Shabbat and holidays), "on" devices are switched on again
 # every minute, to restore them after a power cut.
@@ -199,6 +199,28 @@ class Mox_control(hass.Hass):
             self.turn_on(entity)
         else:
             self.turn_off(entity)
+
+    def stop_curtain(self, name):
+        """
+        Stops a moving curtain where it is. Its position is then unknown until Mox
+        reports it, so the next position command is always sent, and the status is
+        requested so the helper catches up.
+        """
+        device = get_device_by_name(name)
+        if not device or device['input_type'] != 'input_number':
+            return
+        if name in self.pending_sends:  # a delayed command would restart it
+            self.cancel_timer(self.pending_sends.pop(name))
+        self.sock.sendto(curtain_stop_message(device), (gateway['ip'], gateway['port']))
+        self.mox_state[name] = None
+        self.log(f'Curtain command sent: stopping {name}', log="mox_log")
+        for delay in (1, 4):
+            self.run_in(self.request_status, delay, device=name)
+
+    def request_status(self, kwargs):
+        requester = self.get_app("mox_status_requester")
+        if requester:
+            requester.request_device_status(kwargs['device'])
 
     def recover_state(self, kwargs):
         """

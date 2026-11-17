@@ -37,6 +37,16 @@ def curtain_message(device, percent):
     return bytes.fromhex(f"03{address(device)}0100000204{percent:02x}00")
 
 
+def curtain_stop_message(device):
+    """
+        Stop a moving curtain where it is. Same message a Mox wall switch sends
+        (captured from the network on 2026-11-17).
+        :param device: device dictionary.
+        :rtype: bytes
+    """
+    return bytes.fromhex(f"07{address(device)}0200000402")
+
+
 def status_request(device):
     """
         Ask the gateway for the status of one output. Any request also makes the

@@ -19,6 +19,13 @@ DEVICES_FILE = os.environ.get(
 
 INPUT_TYPES = ('input_boolean', 'input_number')
 
+# The Home Assistant entity type each device can appear as through MQTT (optional
+# 'kind' field). Without it, on/off devices are switches and curtains are covers.
+KINDS = {
+    'input_boolean': ('light', 'fan', 'switch'),
+    'input_number': ('cover',),
+}
+
 # Used for any gateway setting missing from the YAML file.
 DEFAULT_GATEWAY = {
     'ip': '172.16.254.254',   # Mox gateway address
@@ -54,6 +61,12 @@ def load_config(path=DEVICES_FILE):
                 raise ValueError(f"{where}: '{key}' is missing or not a {kind.__name__}")
         if dev['input_type'] not in INPUT_TYPES:
             raise ValueError(f"{where}: input_type must be one of {INPUT_TYPES}")
+        kind = dev.get('kind')
+        if kind is not None and kind not in KINDS[dev['input_type']]:
+            raise ValueError(f"{where}: kind must be one of {KINDS[dev['input_type']]}")
+        for key in ('title', 'icon'):
+            if key in dev and not isinstance(dev[key], str):
+                raise ValueError(f"{where}: '{key}' must be text")
         if dev['name'] in names:
             raise ValueError(f"{where}: duplicate name")
         if (dev['controller'], dev['port']) in slots:
@@ -131,6 +144,13 @@ def reload_if_changed(path=DEVICES_FILE):
 
 
 _apply(DEVICES_FILE)
+
+
+def device_kind(device):
+    """
+        The Home Assistant entity type for a device: its 'kind', or the default for its input_type.
+    """
+    return device.get('kind') or KINDS[device['input_type']][-1]
 
 
 def get_device_by_controller(controller, port):

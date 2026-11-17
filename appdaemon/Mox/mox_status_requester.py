@@ -5,6 +5,10 @@ import socket
 import threading
 import time
 
+# Wall switch messages passed on to mox_switches.py: key presses (02 ... 0100000203),
+# curtain positions (03 ... 0100000204) and curtain stops (07 ... 0200000402).
+FORWARDED = ('0100000203', '0100000204', '0200000402')
+
 
 class Mox_status_requester(hass.Hass):
     def initialize(self):
@@ -109,6 +113,8 @@ class Mox_status_requester(hass.Hass):
                     self.last_message = time.time()
                     self.messages_received += 1
                     self.run_in(self.handle_status, 0, packet=data.hex())
+                elif data[:1] in (b'\x02', b'\x03', b'\x07') and data[5:10].hex() in FORWARDED:
+                    self.run_in(self.forward, 0, packet=data.hex())  # wall switch: see mox_switches.py
             except socket.timeout:
                 continue
             except Exception as e:
@@ -121,9 +127,14 @@ class Mox_status_requester(hass.Hass):
         """
         Updates the device's helper from a status message, if the device changed.
         """
-        controller, port, status = parse_status(bytes.fromhex(kwargs['packet']))
+        parsed = parse_status(bytes.fromhex(kwargs['packet']))
+        if not parsed:
+            self.forward(kwargs)  # not a status: maybe a wall switch command
+            return
+        controller, port, status = parsed
         device = get_device_by_controller(controller, port)
         if not device:
+            self.forward(kwargs)  # maybe a wall switch commanding a replaced controller
             return
         name = device['name']
         is_curtain = device['input_type'] == 'input_number'
@@ -179,6 +190,18 @@ class Mox_status_requester(hass.Hass):
                 self.turn_off(entity)
             self.log(f'{label} {value}', log="mox_log")
             self.wall_switch_used(name)
+
+    def switches_app(self):
+        """
+        The mox_switches app, if it is configured (see mox_switches.py).
+        """
+        app = self.get_app("mox_switches")
+        return app if app and hasattr(app, 'handle_packet') else None
+
+    def forward(self, kwargs):
+        app = self.switches_app()
+        if app:
+            app.handle_packet(kwargs['packet'])
 
     def wall_switch_used(self, name):
         """

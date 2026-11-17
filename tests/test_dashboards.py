@@ -43,6 +43,9 @@ class DashboardTests(unittest.TestCase):
         self.assertIn({'empty': 1}, living['layout'])          # after the 2x2 tiles
         self.assertNotIn('title', self.page('Office')['d0'])   # friendly name used
         self.assertEqual(main['m0']['entity'], 'input_boolean.away_from_home')
+        self.assertEqual(main['m0']['widget_type'], 'confirm_switch')
+        self.assertEqual(main['m0']['confirm_on'], 'Mark the house as empty?')
+        self.assertEqual(living['d0']['widget_type'], 'switch')
         self.assertIn('m0(2x1), spacer(4x1)', main['layout'])
         self.assertIn('m0(2x1)', self.page('Main_m')['layout'])
 

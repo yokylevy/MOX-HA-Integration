@@ -14,7 +14,8 @@ rooms.yaml (see dashboards/rooms.example.yaml):
     title: Our home
     skin: mox_glass
     main_devices:           # optional: house-wide switches on the main page, beside the clock
-      - {entity: input_boolean.away_from_home, title: Away, icon: mdi-home-export-outline}
+      - {entity: input_boolean.away_from_home, title: Away, icon: mdi-home-export-outline,
+         confirm_on: "Nobody is home?", confirm_off: "Somebody is home?"}   # optional questions
     rooms:
       - id: Living          # page file name, letters and digits
         title: Living room
@@ -74,8 +75,12 @@ def tiles_layout(names, per_row, size='2x2'):
 def switch_widget(name, spec):
     title = [f"title: {quote(spec['title'])}"] if spec.get('title') else []
     icon = spec.get('icon', TILE_ICONS.get(spec['domain'], 'mdi-power'))
-    return widget(name, ["widget_type: switch", f"entity: {spec['entity']}",
-                         f"icon_on: {icon}", f"icon_off: {icon}"] + title)
+    lines = ["widget_type: switch", f"entity: {spec['entity']}", f"icon_on: {icon}", f"icon_off: {icon}"]
+    if spec.get('confirm_on') or spec.get('confirm_off'):  # ask before switching
+        lines[0] = "widget_type: confirm_switch"
+        lines += [f"confirm_on: {quote(spec.get('confirm_on', ''))}",
+                  f"confirm_off: {quote(spec.get('confirm_off', ''))}"]
+    return widget(name, lines + title)
 
 
 def main_page(config, variant=''):

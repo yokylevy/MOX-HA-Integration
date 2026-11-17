@@ -1,0 +1,23 @@
+# Example rooms file for tools/make_dashboards.py. Keep your own copy outside the repository
+# (for example next to mox_devices.yaml), then:
+#   python tools/make_dashboards.py rooms.yaml out
+# and copy out/*.dash to the AppDaemon add-on's dashboards folder.
+main: Main            # file name of the main page
+title: Our home
+home_title: Home    # label of the button back to the main page
+skin: mox_glass       # open the pages with ?skin=mox_glass, e.g. http://homeassistant:5050/Main?skin=mox_glass
+rooms:
+  - id: Living        # page file name: letters, digits or _
+    title: Living room
+    icon: mdi-sofa    # Material Design icon for the room's tile on the main page
+    devices:
+      - {entity: light.living_room, title: Ceiling}
+      - {entity: switch.central_ac, title: AC, icon: mdi-air-conditioner}
+      - {entity: cover.living_room_curtain, title: Curtain}   # a row with ▲ ■ ▼ buttons
+  - id: Office
+    title: Office
+    icon: mdi-desk
+    devices:
+      - light.office_light                                     # title: the entity's friendly name
+      - {entity: fan.office_fan, title: Fan}
+      - {entity: cover.office_curtain, title: Curtain}

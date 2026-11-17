@@ -143,6 +143,14 @@ mox_switches:
 
 To find a switch's numbers, run a small UDP listener on the network that sends the gateway a status request every second (the gateway reports to whoever asked last) and press each half of the switch a different number of times. Stop it afterwards, or Home Assistant won't receive the presses. `mox.log` shows `Wall switch 400-169: cover… open` for each action.
 
+### Optional: room dashboards (AppDaemon HADashboard)
+
+`tools/make_dashboards.py` builds [HADashboard](https://appdaemon.readthedocs.io/en/latest/DASHBOARD_CREATION.html) pages from a short rooms file: a main page with a clock and a tile per room, and a page per room with its lights, fans and switches as tiles and a row per curtain with ▲ ■ ▼ buttons.
+
+1. Copy `dashboards/custom_css` and `dashboards/custom_widgets` to the AppDaemon add-on folder (`/addon_configs/a0d7b954_appdaemon/`). The `mox_glass` skin shows frosted tiles over a background picture: put a photo named `background.jpg` in `custom_css/mox_glass/` (a dark blue gradient is used until then).
+2. Copy `dashboards/rooms.example.yaml` somewhere private (for example `mox_data/dashboards.yaml`), list your rooms and devices, and run `python tools/make_dashboards.py mox_data/dashboards.yaml out`.
+3. Copy `out/*.dash` to the add-on's `dashboards` folder and open `http://<home-assistant>:5050/Main?skin=mox_glass`. The `skin` setting is passed on when you move between pages.
+
 ### Gateway online sensor and alert
 
 `mox_status_requester` publishes `binary_sensor.mox_gateway_online` (device class *connectivity*). It is **on** while Mox messages keep arriving (normally many per minute) and turns **off** when none has arrived for 10 minutes. Its attributes show `last_message` and `messages_received`. Change the limit in `apps.yaml`:

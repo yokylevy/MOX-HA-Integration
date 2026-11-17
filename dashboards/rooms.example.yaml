@@ -6,6 +6,8 @@ main: Main            # file name of the main page
 title: Our home
 home_title: Home    # label of the button back to the main page
 skin: mox_glass       # open the pages with ?skin=mox_glass, e.g. http://homeassistant:5050/Main?skin=mox_glass
+main_devices:         # optional: house-wide switches on the main page, beside the clock
+  - {entity: input_boolean.away_from_home, title: Away from home, icon: mdi-home-export-outline}
 rooms:
   - id: Living        # page file name: letters, digits or _
     title: Living room

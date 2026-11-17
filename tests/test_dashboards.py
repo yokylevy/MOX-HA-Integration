@@ -42,6 +42,9 @@ class DashboardTests(unittest.TestCase):
         self.assertIn('c2_name(3x1), c2_up(1x1), c2_stop(1x1), c2_down(1x1)', living['layout'])
         self.assertIn({'empty': 1}, living['layout'])          # after the 2x2 tiles
         self.assertNotIn('title', self.page('Office')['d0'])   # friendly name used
+        self.assertEqual(main['m0']['entity'], 'input_boolean.away_from_home')
+        self.assertIn('m0(2x1), spacer(4x1)', main['layout'])
+        self.assertIn('m0(2x1)', self.page('Main_m')['layout'])
 
     def test_bad_room_id(self):
         path = os.path.join(self.out, 'rooms.yaml')

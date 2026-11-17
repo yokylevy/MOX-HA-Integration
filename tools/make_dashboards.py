@@ -13,6 +13,8 @@ rooms.yaml (see dashboards/rooms.example.yaml):
     main: Main              # file name of the main page
     title: Our home
     skin: mox_glass
+    main_devices:           # optional: house-wide switches on the main page, beside the clock
+      - {entity: input_boolean.away_from_home, title: Away, icon: mdi-home-export-outline}
     rooms:
       - id: Living          # page file name, letters and digits
         title: Living room
@@ -69,11 +71,24 @@ def tiles_layout(names, per_row, size='2x2'):
     return rows
 
 
+def switch_widget(name, spec):
+    title = [f"title: {quote(spec['title'])}"] if spec.get('title') else []
+    icon = spec.get('icon', TILE_ICONS.get(spec['domain'], 'mdi-power'))
+    return widget(name, ["widget_type: switch", f"entity: {spec['entity']}",
+                         f"icon_on: {icon}", f"icon_off: {icon}"] + title)
+
+
 def main_page(config, variant=''):
     layout = LAYOUTS[variant]
     out = header(config.get('title', 'Home'), config.get('skin', 'mox_glass'), layout)
     out += widget('page_title', ["widget_type: label", f"text: {quote(config.get('title', 'Home'))}"])
     out += widget('clock', ["widget_type: clock", "time_format: 24hr", 'date_format_country: "he-IL"'])
+    buttons = []  # house-wide switches (main_devices), beside the clock
+    for n, spec in enumerate(device_spec(d) for d in config.get('main_devices') or []):
+        if spec['domain'] == 'cover':
+            raise ValueError(f"main_devices can't hold covers: {spec['entity']}")
+        out += switch_widget(f"m{n}", spec)
+        buttons.append(f"m{n}")
     names = []
     for room in config['rooms']:
         name = f"go_{room['id'].lower()}"
@@ -82,8 +97,13 @@ def main_page(config, variant=''):
                              f"dashboard: {room['id']}{variant}", f"icon_inactive: {room.get('icon', 'mdi-door')}"])
     if variant == PHONE:
         out += ["layout:", "    - page_title(4x1)", "    - clock(4x1)"]
+        out += tiles_layout(buttons, 2, size='2x1')
     else:
-        out += ["layout:", "    - page_title(6x1), clock(2x2)", "    - spacer(6x1)"]
+        beside_clock, rest = buttons[:3], buttons[3:]
+        cells = [f"{b}(2x1)" for b in beside_clock] + (["spacer(%dx1)" % (6 - 2 * len(beside_clock))]
+                                                       if len(beside_clock) < 3 else [])
+        out += ["layout:", "    - page_title(6x1), clock(2x2)", "    - " + ", ".join(cells)]
+        out += tiles_layout(rest, 4, size='2x1')
     out += tiles_layout(names, layout['tiles_per_row'])
     return "\n".join(out) + "\n"
 
@@ -107,9 +127,7 @@ def room_page(config, room, variant=''):
             curtains.append(base)
         else:
             name = f"d{n}"
-            icon = spec.get('icon', TILE_ICONS.get(spec['domain'], 'mdi-power'))
-            out += widget(name, ["widget_type: switch", f"entity: {spec['entity']}",
-                                 f"icon_on: {icon}", f"icon_off: {icon}"] + title)
+            out += switch_widget(name, spec)
             tiles.append(name)
     out += ["layout:", f"    - home(1x1), page_title({layout['columns'] - 1}x1)"]
     out += tiles_layout(tiles, layout['tiles_per_row'])

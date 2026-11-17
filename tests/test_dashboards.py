@@ -25,7 +25,12 @@ class DashboardTests(unittest.TestCase):
 
     def test_example(self):
         pages = make_dashboards.build(os.path.join(ROOT, 'dashboards', 'rooms.example.yaml'), self.out)
-        self.assertEqual(pages, ['Living', 'Main', 'Office'])
+        self.assertEqual(pages, ['Living', 'Living_m', 'Main', 'Main_m', 'Office', 'Office_m'])
+        phone = self.page('Living_m')
+        self.assertEqual(phone['columns'], 4)
+        self.assertEqual(phone['home']['dashboard'], 'Main_m')
+        self.assertEqual(self.page('Main_m')['go_office']['dashboard'], 'Office_m')
+        self.assertIn('c2_up(1x1), c2_stop(2x1), c2_down(1x1)', phone['layout'])
         main = self.page('Main')
         self.assertEqual(main['go_office']['dashboard'], 'Office')
         self.assertEqual(main['skin'], 'mox_glass')
@@ -37,6 +42,12 @@ class DashboardTests(unittest.TestCase):
         self.assertIn('c2_name(3x1), c2_up(1x1), c2_stop(1x1), c2_down(1x1)', living['layout'])
         self.assertIn({'empty': 1}, living['layout'])          # after the 2x2 tiles
         self.assertNotIn('title', self.page('Office')['d0'])   # friendly name used
+        self.assertEqual(main['m0']['entity'], 'input_boolean.away_from_home')
+        self.assertEqual(main['m0']['widget_type'], 'confirm_switch')
+        self.assertEqual(main['m0']['confirm_on'], 'Mark the house as empty?')
+        self.assertEqual(living['d0']['widget_type'], 'switch')
+        self.assertIn('m0(2x1), spacer(4x1)', main['layout'])
+        self.assertIn('m0(2x1)', self.page('Main_m')['layout'])
 
     def test_bad_room_id(self):
         path = os.path.join(self.out, 'rooms.yaml')

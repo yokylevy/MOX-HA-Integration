@@ -27,8 +27,10 @@
 # It is your responsibility to ensure the HTML is correct
 #
 
+# Opens the phone layout (page name + _m, made by tools/make_dashboards.py) on screens
+# narrower than 700 pixels, and the wide layout on wider ones.
 head_includes:
-  - <! head tags go here ->
+  - '<script>(function(){var p=location.pathname.replace(/^\/+|\/+$/g,"");if(!p)return;var w=window.innerWidth||screen.width;var phone=w<700;var m=p.slice(-2)=="_m";if(phone&&!m){location.replace("/"+p+"_m"+location.search)}else if(!phone&&m){location.replace("/"+p.slice(0,-2)+location.search)}})();</script>'
 
 #
 # Custom body includes - should be a YAML List, e.g.:

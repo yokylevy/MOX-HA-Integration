@@ -489,6 +489,10 @@ class WallSwitchTests(unittest.TestCase):
         self.assertEqual(self.services(), [('cover/set_cover_position', LEFT, 100),
                                            ('cover/stop_cover', LEFT, None)])
 
+    def test_messages_before_initialize_are_ignored(self):
+        app = Mox_switches(states=self.states, args={})
+        self.assertFalse(app.handle_packet('07000190120200000402'))
+
     def test_other_messages_are_ignored(self):
         self.send('020000cab9010000020301')            # an unconfigured button
         self.send('030001901301000002046400')          # an unconfigured output

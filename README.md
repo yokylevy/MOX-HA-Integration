@@ -151,6 +151,18 @@ To find a switch's numbers, run a small UDP listener on the network that sends t
 2. Copy `dashboards/rooms.example.yaml` somewhere private (for example `mox_data/dashboards.yaml`), list your rooms and devices, and run `python tools/make_dashboards.py mox_data/dashboards.yaml out`.
 3. Copy `out/*.dash` to the add-on's `dashboards` folder and open `http://<home-assistant>:5050/Main?skin=mox_glass`. The `skin` setting is passed on when you move between pages. Every page is also made in a phone layout (4 columns, name ending in `_m`): the skin opens it by itself on screens narrower than 700 pixels, so one link works on phones and tablets.
 
+**Secure access from outside.** HADashboard has no login by default, so don't open its port to the internet as it is. AppDaemon can use HTTPS with Home Assistant's certificate and a password (asked once per browser; it also protects the AppDaemon admin page and API). Put `appdaemon_password: ...` in Home Assistant's `secrets.yaml`, change the `http:` section of `appdaemon.yaml`, restart the add-on, then forward the port on your router:
+
+```yaml
+http:
+  url: https://0.0.0.0:5050
+  password: !secret appdaemon_password
+  ssl_certificate: /ssl/fullchain.pem
+  ssl_key: /ssl/privkey.pem
+```
+
+AppDaemon reads the certificate when it starts, so restart the add-on after the certificate is renewed.
+
 ### Gateway online sensor and alert
 
 `mox_status_requester` publishes `binary_sensor.mox_gateway_online` (device class *connectivity*). It is **on** while Mox messages keep arriving (normally many per minute) and turns **off** when none has arrived for 10 minutes. Its attributes show `last_message` and `messages_received`. Change the limit in `apps.yaml`:

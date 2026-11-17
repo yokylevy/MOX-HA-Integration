@@ -102,6 +102,8 @@ class Mox_status_requester(hass.Hass):
                     self.last_message = time.time()
                     self.messages_received += 1
                     self.run_in(self.handle_status, 0, packet=data.hex())
+                elif data[5:10].hex() in ('0100000203', '0200000402') and data[:1] in (b'\x02', b'\x07'):
+                    self.run_in(self.forward, 0, packet=data.hex())  # wall switch: see mox_switches.py
             except socket.timeout:
                 continue
             except Exception as e:
@@ -117,6 +119,7 @@ class Mox_status_requester(hass.Hass):
         controller, port, status = parse_status(bytes.fromhex(kwargs['packet']))
         device = get_device_by_controller(controller, port)
         if not device:
+            self.forward(kwargs)  # maybe a wall switch commanding a replaced controller
             return
         name = device['name']
         is_curtain = device['input_type'] == 'input_number'
@@ -157,6 +160,18 @@ class Mox_status_requester(hass.Hass):
                 self.turn_off(entity)
             self.log(f'{label} {value}', log="mox_log")
             self.wall_switch_used(name)
+
+    def switches_app(self):
+        """
+        The mox_switches app, if it is configured (see mox_switches.py).
+        """
+        app = self.get_app("mox_switches")
+        return app if app and hasattr(app, 'handle_packet') else None
+
+    def forward(self, kwargs):
+        app = self.switches_app()
+        if app:
+            app.handle_packet(kwargs['packet'])
 
     def wall_switch_used(self, name):
         """

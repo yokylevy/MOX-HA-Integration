@@ -5,8 +5,36 @@ turn_on/turn_off/call_service change the dict and fire matching state listeners.
 """
 
 
+class FakeMqtt:
+    """The MQTT plugin API: records publishes and subscriptions, delivers messages by hand."""
+
+    def __init__(self):
+        self.published = []      # (topic, payload, retain)
+        self.retained = {}       # topic -> last retained payload
+        self.subscribed = []
+        self.event_listeners = []
+
+    def mqtt_publish(self, topic, payload=None, qos=0, retain=False, **kw):
+        self.published.append((topic, payload, retain))
+        if retain:
+            self.retained[topic] = payload
+
+    def mqtt_subscribe(self, topic, **kw):
+        self.subscribed.append(topic)
+
+    def listen_event(self, cb, event, **kwargs):
+        self.event_listeners.append((cb, event, kwargs))
+
+    def receive(self, topic, payload):
+        for cb, event, kwargs in self.event_listeners:
+            cb(event, {'topic': topic, 'payload': payload}, kwargs)
+
+
 class Hass:
     apps = {}  # name -> app, for get_app()
+    mqtt = None  # set to a FakeMqtt to make get_plugin_api("MQTT") return it
+    attributes = {}  # entity -> {attribute: value}
+    services = []    # every call_service: (service, entity_id, other arguments)
 
     def __init__(self, args=None, states=None):
         self.args = args or {}
@@ -22,7 +50,9 @@ class Hass:
         self.logs.append(msg)
 
     # state
-    def get_state(self, entity):
+    def get_state(self, entity, attribute=None):
+        if attribute:
+            return Hass.attributes.get(entity, {}).get(attribute)
         return self.states.get(entity)
 
     def set_state(self, entity, **kw):
@@ -43,6 +73,7 @@ class Hass:
         self._change(entity, 'off')
 
     def call_service(self, service, entity_id=None, value=None, **kw):
+        Hass.services.append((service, entity_id, kw))
         if service == 'input_number/set_value':
             self._change(entity_id, str(float(value)))
 
@@ -60,11 +91,17 @@ class Hass:
         self.timers.append((cb, delay, kwargs))
         return len(self.timers)
 
+    def cancel_timer(self, handle):
+        self.timers[handle - 1] = (lambda kwargs: None, 0, {})
+
     def run_every(self, *a, **k):
         pass
 
     def register_service(self, *a, **k):
         pass
+
+    def get_plugin_api(self, name):
+        return Hass.mqtt if name == "MQTT" else None
 
     def get_app(self, name):
         return Hass.apps.get(name)

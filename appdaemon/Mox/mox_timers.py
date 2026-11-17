@@ -30,6 +30,12 @@ class Mox_timers(hass.Hass):
         # Every 20 seconds, so a slow or skipped call never misses a minute; each minute runs once.
         self.run_every(self.check, "now", 20)
         self.log(f"Timers: {len(self.devices)} devices, {self.slots} timers each", log="mox_log")
+        missing = [h for d in self.devices for n in range(1, self.slots + 1)
+                   for h in (self.helper(d, n), self.helper(d, n, 'on'), self.helper(d, n, 'off'))
+                   if self.get_state(h) is None]
+        if missing:
+            self.log(f"Timers: {len(missing)} helpers not found (create them, then restart "
+                     f"AppDaemon), e.g. {', '.join(missing[:3])}", level="WARNING", log="mox_log")
 
     @staticmethod
     def helper(device, n, kind=None):

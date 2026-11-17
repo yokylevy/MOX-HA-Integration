@@ -56,7 +56,9 @@ def device_spec(item):
 
 def header(title, skin, layout):
     return [f"title: {quote(title)}", f"widget_dimensions: {layout['size']}",
-            f"widget_margins: {layout['margins']}", f"columns: {layout['columns']}", f"skin: {skin}", ""]
+            f"widget_margins: {layout['margins']}", f"columns: {layout['columns']}",
+            "rows: 80",  # gridster's default is 15: tiles below it get squeezed into gaps
+            f"skin: {skin}", ""]
 
 
 def widget(name, lines):

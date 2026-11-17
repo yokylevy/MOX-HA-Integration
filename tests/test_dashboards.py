@@ -28,6 +28,7 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(pages, ['Living', 'Living_m', 'Main', 'Main_m', 'Office', 'Office_m'])
         phone = self.page('Living_m')
         self.assertEqual(phone['columns'], 4)
+        self.assertEqual(phone['rows'], 80)  # long pages: gridster's default is 15
         self.assertEqual(phone['home']['dashboard'], 'Main_m')
         self.assertEqual(self.page('Main_m')['go_office']['dashboard'], 'Office_m')
         self.assertIn('c2_up(1x1), c2_stop(2x1), c2_down(1x1)', phone['layout'])

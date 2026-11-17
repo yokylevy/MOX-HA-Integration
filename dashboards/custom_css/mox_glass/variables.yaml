@@ -425,8 +425,8 @@ input_text_container_style: ""
 
 input_datetime_title_style: $style_title
 input_datetime_title2_style: $style_title2
-input_datetime_date_style: "color: $white; font-size: 100%"
-input_datetime_time_style: "color: $white; font-size: 100%"
+input_datetime_date_style: "color: #ffffff; background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.35); border-radius: 8px; font-size: 150%; padding: 2px 8px; color-scheme: dark"
+input_datetime_time_style: "color: #ffffff; background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.35); border-radius: 8px; font-size: 150%; padding: 2px 8px; color-scheme: dark"
 input_datetime_widget_style: $background_style
 input_datetime_container_style: ""
 

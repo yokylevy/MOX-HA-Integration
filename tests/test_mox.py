@@ -26,6 +26,8 @@ from appdaemon.plugins.hass.hassapi import Hass, FakeMqtt  # noqa: E402
 from mox_control import Mox_control  # noqa: E402
 from mox_mqtt import Mox_mqtt  # noqa: E402
 from mox_switches import Mox_switches  # noqa: E402
+from mox_timers import Mox_timers  # noqa: E402
+import datetime as _dt  # noqa: E402
 from mox_status_requester import Mox_status_requester  # noqa: E402
 
 OFFICE_LIGHT = {'name': 'office_light', 'controller': 201, 'port': 17, 'input_type': 'input_boolean'}
@@ -558,6 +560,83 @@ class ConfirmTests(AppTests):
         self.requester.handle_status({'packet': status_packet(wrong, 40).hex()})
         self.assertEqual(self.states['input_boolean.office_light'], 'off')
         self.assertTrue(any('Check input_type' in m for m in self.requester.logs))
+
+
+
+AC = 'input_boolean.parents_ac'
+
+
+class TimerTests(unittest.TestCase):
+    def setUp(self):
+        Hass.apps.clear()
+        self.states = {AC: 'off', 'input_boolean.away_from_home': 'off'}
+        for n in (1, 2, 3):
+            self.states[f'input_boolean.timer_parents_ac_{n}'] = 'off'
+            self.states[f'input_datetime.timer_parents_ac_{n}_on'] = '00:00:00'
+            self.states[f'input_datetime.timer_parents_ac_{n}_off'] = '00:00:00'
+        self.app = Mox_timers(states=self.states, args={'devices': [AC], 'slots': 3,
+                                                        'away_switch': 'input_boolean.away_from_home'})
+        self.app.initialize()
+
+    def tearDown(self):
+        Hass.now = None
+
+    def set_timer(self, n, on, off, enabled=True):
+        self.states[f'input_boolean.timer_parents_ac_{n}'] = 'on' if enabled else 'off'
+        self.states[f'input_datetime.timer_parents_ac_{n}_on'] = on + ':00'
+        self.states[f'input_datetime.timer_parents_ac_{n}_off'] = off + ':00'
+
+    def at(self, hhmm):
+        Hass.now = _dt.datetime(2026, 11, 17, int(hhmm[:2]), int(hhmm[3:]), 5)
+        self.app.check({})
+
+    def test_on_and_off(self):
+        self.set_timer(2, '06:00', '08:00')
+        self.at('05:59')
+        self.assertEqual(self.states[AC], 'off')
+        self.at('06:00')
+        self.assertEqual(self.states[AC], 'on')
+        self.at('08:00')
+        self.assertEqual(self.states[AC], 'off')
+
+    def test_disabled_and_unset_timers_do_nothing(self):
+        self.set_timer(1, '06:00', '08:00', enabled=False)
+        self.set_timer(2, '00:00', '00:00')
+        self.at('06:00')
+        self.at('00:00')
+        self.assertEqual(self.states[AC], 'off')
+
+    def test_away_skips_on_but_not_off(self):
+        self.set_timer(1, '06:00', '08:00')
+        self.states['input_boolean.away_from_home'] = 'on'
+        self.at('06:00')
+        self.assertEqual(self.states[AC], 'off')
+        self.states[AC] = 'on'
+        self.at('08:00')
+        self.assertEqual(self.states[AC], 'off')
+
+    def test_each_minute_runs_once(self):
+        self.set_timer(1, '06:00', '08:00')
+        self.at('06:00')
+        self.states[AC] = 'off'      # switched off by hand within the same minute
+        self.at('06:00')
+        self.assertEqual(self.states[AC], 'off')
+
+    def test_back_to_back_timers_leave_it_on(self):
+        self.set_timer(1, '06:00', '08:00')
+        self.set_timer(2, '08:00', '10:00')
+        self.at('06:00')
+        self.at('08:00')
+        self.assertEqual(self.states[AC], 'on')
+        self.at('10:00')
+        self.assertEqual(self.states[AC], 'off')
+
+    def test_overnight(self):
+        self.set_timer(3, '22:00', '02:00')
+        self.at('22:00')
+        self.assertEqual(self.states[AC], 'on')
+        self.at('02:00')
+        self.assertEqual(self.states[AC], 'off')
 
 
 if __name__ == '__main__':

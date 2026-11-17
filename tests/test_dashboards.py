@@ -46,6 +46,10 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(main['m0']['widget_type'], 'confirm_switch')
         self.assertEqual(main['m0']['confirm_on'], 'Mark the house as empty?')
         self.assertEqual(living['d0']['widget_type'], 'switch')
+        self.assertEqual(living['t1_2']['entity'], 'input_boolean.timer_central_ac_2')
+        self.assertEqual(living['t1_3_off']['entity'], 'input_datetime.timer_central_ac_3_off')
+        self.assertIn('t1_1(2x1), t1_1_on(3x1), t1_1_off(3x1)', living['layout'])
+        self.assertIn('t1_1_on(2x1), t1_1_off(2x1)', self.page('Living_m')['layout'])
         self.assertIn('m0(2x1), spacer(4x1)', main['layout'])
         self.assertIn('m0(2x1)', self.page('Main_m')['layout'])
 

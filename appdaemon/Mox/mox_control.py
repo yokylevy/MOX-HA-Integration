@@ -47,6 +47,7 @@ class Mox_control(hass.Hass):
         # command, so nothing is sent: this is what prevents feedback loops.
         self.mox_state = {}
         self.listener_handles = []
+        self.confirm_after = 2  # seconds after an on/off command before asking Mox if it worked
 
         self.init_listeners()
         self.run_every(self.recover_state, "now", 60)
@@ -155,6 +156,49 @@ class Mox_control(hass.Hass):
         self.last_commands[name] = time.time()
         self.mox_state[name] = value
         self.log(log_text, log="mox_log")
+        if input_type == 'input_boolean':
+            self.run_in(self.confirm_command, self.confirm_after, device=name, attempt=1,
+                        sent=self.last_commands[name])
+
+    def confirm_command(self, kwargs):
+        """
+        Timer callback: asks Mox for the device's state, to check the command arrived.
+        Curtains aren't checked, since they're still moving a few seconds later.
+        """
+        name = kwargs['device']
+        if name in self.pending_sends or self.last_commands.get(name) != kwargs['sent']:
+            return  # a newer command replaced this one; it is checked on its own
+        requester = self.get_app("mox_status_requester")
+        if requester and hasattr(requester, 'request_confirmation'):
+            requester.request_confirmation(name, kwargs['attempt'])
+
+    def command_confirmed(self, name, value, attempt):
+        """
+        Called by mox_status_requester with Mox's answer to a confirmation request.
+        If the device isn't in the state the helper shows, the command was lost: send
+        it once more, and if that fails too, show Mox's real state in the helper.
+        """
+        entity = f'input_boolean.{name}'
+        wanted = parse_value('input_boolean', self.get_state(entity))
+        if wanted is None or value == wanted:
+            self.mox_state[name] = value
+            return
+        device = get_device_by_name(name)
+        if device and attempt < 2:
+            self.log(f'{name} is still {value} in Mox: sending {wanted} again', log="mox_log", level="WARNING")
+            self.sock.sendto(switch_message(device, wanted == 'on'), (gateway['ip'], gateway['port']))
+            self.last_commands[name] = time.time()
+            self.mox_state[name] = wanted
+            self.run_in(self.confirm_command, self.confirm_after, device=name, attempt=attempt + 1,
+                        sent=self.last_commands[name])
+            return
+        self.log(f'{name} stayed {value} in Mox after 2 tries: showing {value} in Home Assistant',
+                 log="mox_log", level="WARNING")
+        self.mox_state[name] = value  # so the helper change below isn't sent to Mox
+        if value == 'on':
+            self.turn_on(entity)
+        else:
+            self.turn_off(entity)
 
     def stop_curtain(self, name):
         """

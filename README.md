@@ -34,8 +34,12 @@ The gateway listens on UDP port **6670**. Each Mox controller has a number and 8
 | Set curtain | `03` + controller (6) + output (2) + `0100000204` + position (2) + `00` |
 | Stop curtain | `07` + controller (6) + output (2) + `0200000402` (the message a Mox wall switch sends) |
 | Request status | `02` + controller (6) + output (2) + `0100000102` |
+| Reply: on/off | `03` + controller (6) + output (2) + `0100000303` + `01` on / `00` off |
+| Reply: curtain | `03` + controller (6) + output (2) + `0100000304` + position (2) + `00` |
 
-Status replies start with `03` (for an on/off output: `03` + controller + output + `0100000303` + `01` on / `00` off) and are sent to UDP port **6666** on the Home Assistant host. After it receives a request, the gateway keeps reporting device status for a few minutes and reports every change immediately, which is why the requester polls every 30 seconds.
+Status replies are sent to UDP port **6666** on the Home Assistant host. The gateway answers a status request for that device, keeps reporting device status for a few minutes afterwards, and reports every change immediately, which is why the requester polls every 30 seconds. It also passes on other clients' traffic, such as the wall panel's status requests (starting `01`) and wall button presses (`02` + controller + a channel above 24 + `010000020301`). Only the two reply formats above are read as statuses; wall switch key presses, curtain commands and stops are passed on to `mox_switches`. The [homebridge-mox](https://github.com/YahavGB/homebridge-mox) project documents the same messages, and dimmer ones too.
+
+After every on/off command, `mox_control` asks Mox for that device's status 2 seconds later. If the device didn't switch, the command is sent once more. If it still hasn't switched, the helper shows Mox's real state and `mox.log` has a warning. Curtains aren't checked this way, since they're still moving. When AppDaemon starts, the status of every device is requested once, so the helpers catch up within seconds.
 
 ## Requirements
 

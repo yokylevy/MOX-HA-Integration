@@ -25,7 +25,12 @@ class DashboardTests(unittest.TestCase):
 
     def test_example(self):
         pages = make_dashboards.build(os.path.join(ROOT, 'dashboards', 'rooms.example.yaml'), self.out)
-        self.assertEqual(pages, ['Living', 'Main', 'Office'])
+        self.assertEqual(pages, ['Living', 'Living_m', 'Main', 'Main_m', 'Office', 'Office_m'])
+        phone = self.page('Living_m')
+        self.assertEqual(phone['columns'], 4)
+        self.assertEqual(phone['home']['dashboard'], 'Main_m')
+        self.assertEqual(self.page('Main_m')['go_office']['dashboard'], 'Office_m')
+        self.assertIn('c2_up(1x1), c2_stop(2x1), c2_down(1x1)', phone['layout'])
         main = self.page('Main')
         self.assertEqual(main['go_office']['dashboard'], 'Office')
         self.assertEqual(main['skin'], 'mox_glass')

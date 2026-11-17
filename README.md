@@ -149,7 +149,7 @@ To find a switch's numbers, run a small UDP listener on the network that sends t
 
 1. Copy `dashboards/custom_css` and `dashboards/custom_widgets` to the AppDaemon add-on folder (`/addon_configs/a0d7b954_appdaemon/`). The `mox_glass` skin shows frosted tiles over a background picture: put a photo named `background.jpg` in `custom_css/mox_glass/` (a dark blue gradient is used until then).
 2. Copy `dashboards/rooms.example.yaml` somewhere private (for example `mox_data/dashboards.yaml`), list your rooms and devices, and run `python tools/make_dashboards.py mox_data/dashboards.yaml out`.
-3. Copy `out/*.dash` to the add-on's `dashboards` folder and open `http://<home-assistant>:5050/Main?skin=mox_glass`. The `skin` setting is passed on when you move between pages.
+3. Copy `out/*.dash` to the add-on's `dashboards` folder and open `http://<home-assistant>:5050/Main?skin=mox_glass`. The `skin` setting is passed on when you move between pages. Every page is also made in a phone layout (4 columns, name ending in `_m`): the skin opens it by itself on screens narrower than 700 pixels, so one link works on phones and tablets.
 
 ### Gateway online sensor and alert
 

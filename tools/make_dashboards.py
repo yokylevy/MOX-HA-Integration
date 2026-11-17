@@ -28,7 +28,13 @@ import re
 import sys
 import yaml
 
-COLUMNS = 8
+# Two layouts of every page: the wide one, and a phone one whose file name ends in PHONE.
+# The mox_glass skin opens the phone pages on narrow screens (see its head_includes).
+PHONE = '_m'
+LAYOUTS = {
+    '': {'columns': 8, 'size': [120, 120], 'margins': [8, 8], 'tiles_per_row': 4},
+    PHONE: {'columns': 4, 'size': [84, 84], 'margins': [6, 6], 'tiles_per_row': 2},
+}
 TILE_ICONS = {'light': 'mdi-lightbulb', 'fan': 'mdi-fan', 'switch': 'mdi-power',
               'input_boolean': 'mdi-power'}
 
@@ -45,16 +51,16 @@ def device_spec(item):
     return spec
 
 
-def header(title, skin):
-    return [f"title: {quote(title)}", "widget_dimensions: [120, 120]", "widget_margins: [8, 8]",
-            f"columns: {COLUMNS}", f"skin: {skin}", ""]
+def header(title, skin, layout):
+    return [f"title: {quote(title)}", f"widget_dimensions: {layout['size']}",
+            f"widget_margins: {layout['margins']}", f"columns: {layout['columns']}", f"skin: {skin}", ""]
 
 
 def widget(name, lines):
     return [f"{name}:"] + [f"    {line}" for line in lines] + [""]
 
 
-def tiles_layout(names, size='2x2', per_row=4):
+def tiles_layout(names, per_row, size='2x2'):
     rows = []
     for i in range(0, len(names), per_row):
         rows.append("    - " + ", ".join(f"{n}({size})" for n in names[i:i + per_row]))
@@ -63,8 +69,9 @@ def tiles_layout(names, size='2x2', per_row=4):
     return rows
 
 
-def main_page(config):
-    out = header(config.get('title', 'Home'), config.get('skin', 'mox_glass'))
+def main_page(config, variant=''):
+    layout = LAYOUTS[variant]
+    out = header(config.get('title', 'Home'), config.get('skin', 'mox_glass'), layout)
     out += widget('page_title', ["widget_type: label", f"text: {quote(config.get('title', 'Home'))}"])
     out += widget('clock', ["widget_type: clock", "time_format: 24hr", 'date_format_country: "he-IL"'])
     names = []
@@ -72,16 +79,20 @@ def main_page(config):
         name = f"go_{room['id'].lower()}"
         names.append(name)
         out += widget(name, ["widget_type: navigate", f"title: {quote(room['title'])}",
-                             f"dashboard: {room['id']}", f"icon_inactive: {room.get('icon', 'mdi-door')}"])
-    out += ["layout:", "    - page_title(6x1), clock(2x2)", "    - spacer(6x1)"]
-    out += tiles_layout(names)
+                             f"dashboard: {room['id']}{variant}", f"icon_inactive: {room.get('icon', 'mdi-door')}"])
+    if variant == PHONE:
+        out += ["layout:", "    - page_title(4x1)", "    - clock(4x1)"]
+    else:
+        out += ["layout:", "    - page_title(6x1), clock(2x2)", "    - spacer(6x1)"]
+    out += tiles_layout(names, layout['tiles_per_row'])
     return "\n".join(out) + "\n"
 
 
-def room_page(config, room):
-    out = header(room['title'], config.get('skin', 'mox_glass'))
+def room_page(config, room, variant=''):
+    layout = LAYOUTS[variant]
+    out = header(room['title'], config.get('skin', 'mox_glass'), layout)
     out += widget('home', ["widget_type: navigate", f"title: {quote(config.get('home_title', 'Home'))}",
-                           f"dashboard: {config.get('main', 'Main')}",
+                           f"dashboard: {config.get('main', 'Main')}{variant}",
                            "icon_inactive: mdi-home"])
     out += widget('page_title', ["widget_type: label", f"text: {quote(room['title'])}"])
     tiles, curtains = [], []
@@ -100,25 +111,32 @@ def room_page(config, room):
             out += widget(name, ["widget_type: switch", f"entity: {spec['entity']}",
                                  f"icon_on: {icon}", f"icon_off: {icon}"] + title)
             tiles.append(name)
-    out += ["layout:", "    - home(1x1), page_title(7x1)"]
-    out += tiles_layout(tiles)
+    out += ["layout:", f"    - home(1x1), page_title({layout['columns'] - 1}x1)"]
+    out += tiles_layout(tiles, layout['tiles_per_row'])
     for base in curtains:
-        out.append(f"    - {base}_name(3x1), {base}_up(1x1), {base}_stop(1x1), {base}_down(1x1)")
+        if variant == PHONE:  # name on its own row, then the buttons under it
+            out.append(f"    - {base}_name(4x1)")
+            out.append(f"    - {base}_up(1x1), {base}_stop(2x1), {base}_down(1x1)")
+        else:
+            out.append(f"    - {base}_name(3x1), {base}_up(1x1), {base}_stop(1x1), {base}_down(1x1)")
     return "\n".join(out) + "\n"
 
 
 def build(config_path, out_dir):
     with open(config_path, encoding='utf-8') as f:
         config = yaml.safe_load(f)
+    main = config.get('main', 'Main')
     ids = [room['id'] for room in config['rooms']]
-    for page_id in ids + [config.get('main', 'Main')]:
-        if not re.match(r'^[A-Za-z0-9_]+$', page_id):
-            raise ValueError(f"page id must be letters, digits or _: {page_id}")
-    if len(set(ids)) != len(ids):
-        raise ValueError("room ids must be unique")
+    for page_id in ids + [main]:
+        if not re.match(r'^[A-Za-z0-9_]+$', page_id) or page_id.endswith(PHONE):
+            raise ValueError(f"page id must be letters, digits or _ and not end in {PHONE}: {page_id}")
+    if len(set(ids + [main])) != len(ids) + 1:
+        raise ValueError("room ids must be unique and differ from the main page")
     os.makedirs(out_dir, exist_ok=True)
-    pages = {config.get('main', 'Main'): main_page(config)}
-    pages.update({room['id']: room_page(config, room) for room in config['rooms']})
+    pages = {}
+    for variant in LAYOUTS:
+        pages[main + variant] = main_page(config, variant)
+        pages.update({room['id'] + variant: room_page(config, room, variant) for room in config['rooms']})
     for page_id, text in pages.items():
         with open(os.path.join(out_dir, f"{page_id}.dash"), 'w', encoding='utf-8', newline='\n') as f:
             f.write(text)

@@ -33,6 +33,8 @@ STOP_CODE = '0200000402'        # 07 + controller + output + code
 
 
 class Mox_switches(hass.Hass):
+    ready = False  # set at the end of initialize(): messages can arrive before it runs
+
     def initialize(self):
         self.long_press = float(self.args.get('long_press', 0.6))
         self.step = int(self.args.get('step', 5))
@@ -44,6 +46,7 @@ class Mox_switches(hass.Hass):
                         for o in self.args.get('outputs') or []}
         self.held = {}      # (controller, button) -> {'token', 'action'} while pressed
         self.recent = {}    # message -> time, to drop the gateway's repeats
+        self.ready = True
         self.log(f"Mox wall switches: {len(self.buttons) // 2} button pairs, "
                  f"{len(self.outputs)} outputs", log="mox_log")
 
@@ -51,7 +54,7 @@ class Mox_switches(hass.Hass):
         """
             A message from the gateway (hex string). Returns True if it was for this app.
         """
-        if len(packet) < 20:
+        if not self.ready or len(packet) < 20:
             return False
         first, code, data = packet[:2], packet[10:20], packet[20:]
         key = (int(packet[2:8], 16), int(packet[8:10], 16))

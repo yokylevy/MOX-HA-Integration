@@ -19,10 +19,12 @@ EXAMPLE = os.path.join(ROOT, 'mox_data', 'mox_devices.example.yaml')
 os.environ['MOX_DEVICES_FILE'] = EXAMPLE
 sys.path[:0] = [os.path.join(ROOT, 'tests', 'fake_appdaemon'), os.path.join(ROOT, 'appdaemon', 'Mox')]
 
+import json  # noqa: E402
 import mox_devices  # noqa: E402
 import mox_protocol  # noqa: E402
-from appdaemon.plugins.hass.hassapi import Hass  # noqa: E402
+from appdaemon.plugins.hass.hassapi import Hass, FakeMqtt  # noqa: E402
 from mox_control import Mox_control  # noqa: E402
+from mox_mqtt import Mox_mqtt  # noqa: E402
 from mox_status_requester import Mox_status_requester  # noqa: E402
 
 OFFICE_LIGHT = {'name': 'office_light', 'controller': 201, 'port': 17, 'input_type': 'input_boolean'}
@@ -41,11 +43,11 @@ class FakeSocket:
 
 
 def status_packet(device, value):
-    """A status reply as the gateway sends it."""
+    """A status reply as the gateway sends it (switch format seen in mox.log on 2026-11-17)."""
     if device['input_type'] == 'input_number':
-        tail = f"0100000204{value:02x}00"
+        tail = f"0100000204{value:02x}00"  # not yet seen live
     else:
-        tail = f"0100000203{'01' if value == 'on' else '00'}"
+        tail = f"0100000303{'01' if value == 'on' else '00'}"
     return bytes.fromhex(f"03{mox_protocol.address(device)}{tail}")
 
 
@@ -111,6 +113,10 @@ class DeviceFileTests(unittest.TestCase):
             "  - {name: b, controller: 1, port: 17, input_type: input_boolean}\n": "already used",
             "devices:\n  - {name: a, controller: 1, port: 17, input_type: input_boolean}\n"
             "gateway: {ip: 1.2.3.4, prot: 1}\n": "unknown gateway setting",
+            "devices:\n  - {name: a, controller: 1, port: 17, input_type: input_boolean, kind: cover}\n":
+                "kind must be one of",
+            "devices:\n  - {name: a, controller: 1, port: 17, input_type: input_boolean, title: 5}\n":
+                "'title' must be text",
             "devices: []\n": "non-empty list",
         }
         for text, message in cases.items():
@@ -238,6 +244,130 @@ class AppTests(unittest.TestCase):
             self.assertEqual([m for m, _ in self.control.sock.sent], ['0300012c110100000203' '01'])
         finally:
             shutil.rmtree(tmp)
+
+
+GATEWAY = 'binary_sensor.mox_gateway_online'
+
+
+class MqttTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.path = os.path.join(self.tmp, 'mox_devices.yaml')
+        self.write("devices:\n"
+                   "  - {name: office_light, controller: 201, port: 17, input_type: input_boolean, kind: light}\n"
+                   "  - {name: office_ac, controller: 201, port: 19, input_type: input_boolean,"
+                   " title: מזגן ממד, icon: 'mdi:air-conditioner'}\n"
+                   "  - {name: living_room_curtain, controller: 401, port: 17, input_type: input_number}\n")
+        mox_devices._apply(self.path)
+        self.states = {'input_boolean.office_light': 'on', 'input_boolean.office_ac': 'off',
+                       'input_number.living_room_curtain': '40.0'}
+        Hass.apps.clear()
+        Hass.attributes = {'input_boolean.office_light': {'friendly_name': 'חדר ממד'}}
+        Hass.mqtt = FakeMqtt()
+        self.control = Mox_control(states=self.states)
+        self.control.initialize()
+        self.control.sock.close()
+        self.control.sock = FakeSocket()
+        self.app = Mox_mqtt(states=self.states)
+        Hass.apps.update(mox_control=self.control, mox_mqtt=self.app)
+        self.app.initialize()
+        self.mqtt = Hass.mqtt
+
+    def tearDown(self):
+        Hass.mqtt = None
+        Hass.attributes = {}
+        shutil.rmtree(self.tmp)
+        mox_devices._apply(EXAMPLE)
+
+    def write(self, text):
+        with open(self.path, 'w', encoding='utf-8') as f:
+            f.write(text)
+
+    def config(self, topic):
+        return json.loads(self.mqtt.retained[topic])
+
+    def receive_status(self, device, value):
+        requester = Mox_status_requester(states=self.states)
+        requester.device_states, requester.away_switch, requester.started = {}, None, 0
+        Hass.apps['mox_status_requester'] = requester
+        requester.handle_status({'packet': status_packet(device, value).hex()})
+
+    def test_discovery(self):
+        light = self.config('homeassistant/light/mox_office_light/config')
+        self.assertEqual(light['default_entity_id'], 'light.office_light')
+        self.assertEqual(light['unique_id'], 'mox_201_17')
+        self.assertEqual(light['device']['name'], 'חדר ממד')  # the helper's friendly name
+        self.assertEqual(light['command_topic'], 'mox/office_light/set')
+        ac = self.config('homeassistant/switch/mox_office_ac/config')  # no kind: switch
+        self.assertEqual((ac['device']['name'], ac['icon']), ('מזגן ממד', 'mdi:air-conditioner'))
+        cover = self.config('homeassistant/cover/mox_living_room_curtain/config')
+        self.assertEqual(cover['set_position_topic'], 'mox/living_room_curtain/set_position')
+        self.assertIsNone(cover['payload_stop'])
+        self.assertEqual(self.mqtt.retained['mox/bridge/status'], 'online')
+        self.assertEqual(self.mqtt.retained['mox/gateway/status'], 'online')
+
+    def test_states_follow_helpers(self):
+        self.assertEqual(self.mqtt.retained['mox/office_light/state'], 'ON')
+        self.assertEqual(self.mqtt.retained['mox/living_room_curtain/position'], '40')
+        self.receive_status(OFFICE_LIGHT, 'off')  # wall switch
+        self.assertEqual(self.mqtt.retained['mox/office_light/state'], 'OFF')
+        self.assertEqual(self.control.sock.sent, [])  # not echoed back to Mox
+
+    def test_commands_reach_mox(self):
+        self.mqtt.receive('mox/office_ac/set', 'ON')
+        self.assertEqual(self.states['input_boolean.office_ac'], 'on')
+        self.assertEqual(self.control.sock.sent[-1][0], '030000c9130100000203' '01')
+        self.assertEqual(self.mqtt.retained['mox/office_ac/state'], 'ON')
+        self.mqtt.receive('mox/living_room_curtain/set_position', b'75')
+        self.assertEqual(self.states['input_number.living_room_curtain'], '75.0')
+        self.assertEqual(self.control.sock.sent[-1][0], '030001911101000002044b00')
+        self.assertEqual(self.mqtt.retained['mox/living_room_curtain/position'], '75')
+
+    def test_bad_commands_are_ignored(self):
+        for topic, payload in (('mox/office_ac/set', 'maybe'), ('mox/nothing/set', 'ON'),
+                               ('mox/living_room_curtain/set_position', '150'),
+                               ('mox/living_room_curtain/set', 'STOP'), ('other/office_ac/set', 'ON'),
+                               ('mox/office_ac/set_position', '50')):
+            self.mqtt.receive(topic, payload)
+        self.assertEqual(self.states['input_boolean.office_ac'], 'off')
+        self.assertEqual(self.states['input_number.living_room_curtain'], '40.0')
+        self.assertEqual(self.control.sock.sent, [])
+
+    def test_gateway_offline_makes_entities_unavailable(self):
+        self.states[GATEWAY] = 'off'
+        self.app.on_gateway_change(GATEWAY, 'state', 'on', 'off', {})
+        self.assertEqual(self.mqtt.retained['mox/gateway/status'], 'offline')
+        self.states[GATEWAY] = 'on'
+        self.app.on_gateway_change(GATEWAY, 'state', 'off', 'on', {})
+        self.assertEqual(self.mqtt.retained['mox/gateway/status'], 'online')
+
+    def test_home_assistant_restart_republishes(self):
+        self.mqtt.retained.clear()
+        self.mqtt.receive('homeassistant/status', 'online')
+        self.assertIn('homeassistant/light/mox_office_light/config', self.mqtt.retained)
+        self.assertEqual(self.mqtt.retained['mox/office_light/state'], 'ON')
+
+    def test_device_list_changes(self):
+        light_topic = 'homeassistant/light/mox_office_light/config'
+        self.write("devices:\n"
+                   "  - {name: office_light, controller: 201, port: 17, input_type: input_boolean, kind: light,"
+                   " title: אור ממד}\n"
+                   "  - {name: office_ac, controller: 201, port: 19, input_type: input_boolean, kind: fan}\n")
+        mox_devices._apply(self.path)
+        self.app.check_devices({})
+        self.assertEqual(self.config(light_topic)['device']['name'], 'אור ממד')  # updated in place
+        self.assertNotIn((light_topic, '', True), self.mqtt.published)            # never deleted
+        self.assertEqual(self.mqtt.retained['homeassistant/switch/mox_office_ac/config'], '')  # kind changed
+        self.assertIn('command_topic', self.config('homeassistant/fan/mox_office_ac/config'))
+        self.assertEqual(self.mqtt.retained['homeassistant/cover/mox_living_room_curtain/config'], '')
+        self.mqtt.receive('mox/living_room_curtain/set', 'OPEN')  # removed device: ignored
+        self.assertEqual(self.states['input_number.living_room_curtain'], '40.0')
+
+    def test_no_mqtt_plugin(self):
+        Hass.mqtt = None
+        app = Mox_mqtt(states=self.states)
+        app.initialize()
+        self.assertIn('MQTT plugin not configured', app.logs[0])
 
 
 if __name__ == '__main__':

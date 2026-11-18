@@ -100,6 +100,12 @@ class Hass:
     def register_service(self, *a, **k):
         pass
 
+    now = None  # set to a datetime to fix what datetime() returns
+
+    def datetime(self):
+        import datetime
+        return Hass.now or datetime.datetime.now()
+
     def get_plugin_api(self, name):
         return Hass.mqtt if name == "MQTT" else None
 

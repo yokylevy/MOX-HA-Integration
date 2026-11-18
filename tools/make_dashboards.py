@@ -23,7 +23,8 @@ rooms.yaml (see dashboards/rooms.example.yaml):
         devices:
           - light.living_room                         # title: the entity's friendly name
           - {entity: fan.office_fan, title: Fan}      # or a title of your own
-          - {entity: switch.office_ac, title: AC, icon: mdi-air-conditioner}
+          - {entity: switch.office_ac, title: AC, icon: mdi-air-conditioner, timers: 3,   # daily timers
+             fan_swap: true}   # switch: fan on when the AC goes off (mox_timers fans)
           - {entity: cover.living_room_curtain, title: Curtain}
 """
 import os
@@ -56,7 +57,9 @@ def device_spec(item):
 
 def header(title, skin, layout):
     return [f"title: {quote(title)}", f"widget_dimensions: {layout['size']}",
-            f"widget_margins: {layout['margins']}", f"columns: {layout['columns']}", f"skin: {skin}", ""]
+            f"widget_margins: {layout['margins']}", f"columns: {layout['columns']}",
+            "rows: 80",  # gridster's default is 15: tiles below it get squeezed into gaps
+            f"skin: {skin}", ""]
 
 
 def widget(name, lines):
@@ -81,6 +84,38 @@ def switch_widget(name, spec):
         lines += [f"confirm_on: {quote(spec.get('confirm_on', ''))}",
                   f"confirm_off: {quote(spec.get('confirm_off', ''))}"]
     return widget(name, lines + title)
+
+
+def timer_section(config, spec, base, variant):
+    """
+        Timer rows for a device with 'timers: N' (run by the mox_timers app): a label, then for
+        each timer its enable switch and its on and off times. Returns (layout rows, widget lines).
+    """
+    name = spec['entity'].split('.', 1)[1]
+    texts = {'label': 'Timers', 'timer': 'Timer', 'on': 'On', 'off': 'Off', 'fan_swap': 'Fan when AC is off'}
+    texts.update(config.get('timer_texts') or {})
+    widgets = widget(f"{base}_label", ["widget_type: label",
+                                       f"text: {quote(texts['label'] + ' - ' + spec.get('title', name))}",
+                                       'text_style: "color: #ffffff; font-size: 140%; font-weight: 600"'])
+    rows = [f"    - {base}_label({LAYOUTS[variant]['columns']}x1)"]
+    for n in range(1, int(spec['timers']) + 1):
+        widgets += widget(f"{base}_{n}", ["widget_type: switch", f"entity: input_boolean.timer_{name}_{n}",
+                                          "icon_on: mdi-timer-outline", "icon_off: mdi-timer-off-outline",
+                                          f"title: {quote(texts['timer'] + ' ' + str(n))}"])
+        for kind in ('on', 'off'):
+            widgets += widget(f"{base}_{n}_{kind}", ["widget_type: input_datetime",
+                                                     f"entity: input_datetime.timer_{name}_{n}_{kind}",
+                                                     f"title: {quote(texts[kind])}"])
+        if variant == PHONE:
+            rows += [f"    - {base}_{n}(4x1)", f"    - {base}_{n}_on(2x1), {base}_{n}_off(2x1)"]
+        else:
+            rows.append(f"    - {base}_{n}(2x1), {base}_{n}_on(3x1), {base}_{n}_off(3x1)")
+    if spec.get('fan_swap'):  # mox_timers' fan swap switch for this device
+        widgets += widget(f"{base}_fan", ["widget_type: switch", f"entity: input_boolean.fan_swap_{name}",
+                                          "icon_on: mdi-fan-auto", "icon_off: mdi-fan-auto",
+                                          f"title: {quote(texts['fan_swap'])}"])
+        rows.append(f"    - {base}_fan(4x1)")
+    return rows, widgets
 
 
 def main_page(config, variant=''):
@@ -134,6 +169,13 @@ def room_page(config, room, variant=''):
             name = f"d{n}"
             out += switch_widget(name, spec)
             tiles.append(name)
+    timer_rows = []
+    for n, spec in enumerate(device_spec(d) for d in room.get('devices', [])):
+        if spec['domain'] == 'cover' or not spec.get('timers'):
+            continue
+        out_rows, widgets = timer_section(config, spec, f"t{n}", variant)
+        out += widgets
+        timer_rows += out_rows
     out += ["layout:", f"    - home(1x1), page_title({layout['columns'] - 1}x1)"]
     out += tiles_layout(tiles, layout['tiles_per_row'])
     for base in curtains:
@@ -142,6 +184,7 @@ def room_page(config, room, variant=''):
             out.append(f"    - {base}_up(1x1), {base}_stop(2x1), {base}_down(1x1)")
         else:
             out.append(f"    - {base}_name(3x1), {base}_up(1x1), {base}_stop(1x1), {base}_down(1x1)")
+    out += timer_rows
     return "\n".join(out) + "\n"
 
 

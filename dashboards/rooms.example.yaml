@@ -9,13 +9,14 @@ skin: mox_glass       # open the pages with ?skin=mox_glass, e.g. http://homeass
 main_devices:         # optional: house-wide switches on the main page, beside the clock
   - {entity: input_boolean.away_from_home, title: Away from home, icon: mdi-home-export-outline,
      confirm_on: "Mark the house as empty?", confirm_off: "Mark that someone is home?"}  # asks first
+timer_texts: {label: Timers, timer: Timer, on: On, off: Off}   # optional
 rooms:
   - id: Living        # page file name: letters, digits or _
     title: Living room
     icon: mdi-sofa    # Material Design icon for the room's tile on the main page
     devices:
       - {entity: light.living_room, title: Ceiling}
-      - {entity: switch.central_ac, title: AC, icon: mdi-air-conditioner}
+      - {entity: switch.central_ac, title: AC, icon: mdi-air-conditioner, timers: 3}  # daily timers (mox_timers app)
       - {entity: cover.living_room_curtain, title: Curtain}   # a row with ▲ ■ ▼ buttons
   - id: Office
     title: Office
@@ -23,4 +24,5 @@ rooms:
     devices:
       - light.office_light                                     # title: the entity's friendly name
       - {entity: fan.office_fan, title: Fan}
+      - {entity: switch.office_ac, title: AC, icon: mdi-air-conditioner, timers: 3, fan_swap: true}
       - {entity: cover.office_curtain, title: Curtain}

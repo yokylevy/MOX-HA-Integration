@@ -28,6 +28,7 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(pages, ['Living', 'Living_m', 'Main', 'Main_m', 'Office', 'Office_m'])
         phone = self.page('Living_m')
         self.assertEqual(phone['columns'], 4)
+        self.assertEqual(phone['rows'], 80)  # long pages: gridster's default is 15
         self.assertEqual(phone['home']['dashboard'], 'Main_m')
         self.assertEqual(self.page('Main_m')['go_office']['dashboard'], 'Office_m')
         self.assertIn('c2_up(1x1), c2_stop(2x1), c2_down(1x1)', phone['layout'])
@@ -46,6 +47,12 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(main['m0']['widget_type'], 'confirm_switch')
         self.assertEqual(main['m0']['confirm_on'], 'Mark the house as empty?')
         self.assertEqual(living['d0']['widget_type'], 'switch')
+        self.assertEqual(living['t1_2']['entity'], 'input_boolean.timer_central_ac_2')
+        self.assertEqual(living['t1_3_off']['entity'], 'input_datetime.timer_central_ac_3_off')
+        self.assertIn('t1_1(2x1), t1_1_on(3x1), t1_1_off(3x1)', living['layout'])
+        self.assertIn('t1_1_on(2x1), t1_1_off(2x1)', self.page('Living_m')['layout'])
+        self.assertEqual(self.page('Office')['t2_fan']['entity'], 'input_boolean.fan_swap_office_ac')
+        self.assertNotIn('t1_fan', living)
         self.assertIn('m0(2x1), spacer(4x1)', main['layout'])
         self.assertIn('m0(2x1)', self.page('Main_m')['layout'])
 

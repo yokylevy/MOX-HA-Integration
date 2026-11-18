@@ -35,13 +35,17 @@ CURTAIN = {'name': 'living_room_curtain', 'controller': 401, 'port': 17, 'input_
 
 
 class FakeSocket:
+    """Stands in for the UDP socket: records every message sent."""
     def __init__(self):
+        """Starts with no messages sent."""
         self.sent = []
 
     def sendto(self, message, address):
+        """Records the message as hex with its address."""
         self.sent.append((message.hex(), address))
 
     def close(self):
+        """Nothing to close."""
         pass
 
 
@@ -55,23 +59,29 @@ def status_packet(device, value):
 
 
 class ProtocolTests(unittest.TestCase):
+    """mox_protocol: message building and status parsing."""
     def test_switch_message(self):
+        """Switch message."""
         self.assertEqual(mox_protocol.switch_message(OFFICE_LIGHT, True).hex(), '0300' '00c9' '11' '0100000203' '01')
         self.assertEqual(mox_protocol.switch_message(OFFICE_LIGHT, False).hex(), '030000c9110100000203' '00')
 
     def test_curtain_message(self):
+        """Curtain message."""
         self.assertEqual(mox_protocol.curtain_message(CURTAIN, 100).hex(), '030001911101000002046400')
         with self.assertRaises(ValueError):
             mox_protocol.curtain_message(CURTAIN, 101)
 
     def test_curtain_stop_message(self):  # captured from a Mox wall switch
+        """Curtain stop message."""
         self.assertEqual(mox_protocol.curtain_stop_message({'controller': 400, 'port': 18}).hex(),
                          '07000190120200000402')
 
     def test_status_request(self):
+        """Status request."""
         self.assertEqual(mox_protocol.status_request(OFFICE_LIGHT).hex(), '020000c9110100000102')
 
     def test_parse_status(self):
+        """Parse status."""
         controller, port, s = mox_protocol.parse_status(status_packet(OFFICE_LIGHT, 'on'))
         self.assertEqual((controller, port), (201, 17))
         self.assertEqual(mox_protocol.switch_value(s), 'on')
@@ -79,6 +89,7 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(mox_protocol.curtain_value(s), 37)
 
     def test_parse_status_ignores_other_messages(self):
+        """Parse status ignores other messages."""
         self.assertIsNone(mox_protocol.parse_status(mox_protocol.status_request(OFFICE_LIGHT)))
         self.assertIsNone(mox_protocol.parse_status(b'\x03\x00'))
         self.assertIsNone(mox_protocol.parse_status(b''))
@@ -89,6 +100,7 @@ class ProtocolTests(unittest.TestCase):
             self.assertIsNone(mox_protocol.parse_status(bytes.fromhex(other)), other)
 
     def test_parse_real_replies(self):
+        """Parse real replies."""
         self.assertEqual(mox_protocol.parse_status(bytes.fromhex('030000dd79010000030301'))[:2], (221, 121))
         controller, port, s = mox_protocol.parse_status(bytes.fromhex('030001a51201000003043300'))
         self.assertEqual((controller, port, mox_protocol.curtain_value(s)), (421, 18, 51))
@@ -96,19 +108,24 @@ class ProtocolTests(unittest.TestCase):
 
 
 class DeviceFileTests(unittest.TestCase):
+    """mox_devices: loading, validation and reloading of the YAML device list."""
     def setUp(self):
+        """A temporary folder for test device files."""
         self.dir = tempfile.mkdtemp()
         self.path = os.path.join(self.dir, 'mox_devices.yaml')
 
     def tearDown(self):
+        """Removes the folder and loads the example device list again."""
         shutil.rmtree(self.dir)
         mox_devices._apply(EXAMPLE)
 
     def write(self, text):
+        """Writes the test device file."""
         with open(self.path, 'w', encoding='utf-8') as f:
             f.write(text)
 
     def test_example_file_loads(self):
+        """Example file loads."""
         devices, esp, gw = mox_devices.load_config(EXAMPLE)
         self.assertEqual(len(devices), 11)
         self.assertEqual(gw, mox_devices.DEFAULT_GATEWAY)
@@ -117,12 +134,14 @@ class DeviceFileTests(unittest.TestCase):
         self.assertEqual(mox_devices.get_device_by_name('nothing'), {})
 
     def test_gateway_section(self):
+        """Gateway section."""
         self.write("devices:\n  - {name: a, controller: 1, port: 17, input_type: input_boolean}\n"
                    "gateway:\n  ip: 10.0.0.9\n")
         _, _, gw = mox_devices.load_config(self.path)
         self.assertEqual(gw, {'ip': '10.0.0.9', 'port': 6670, 'listen_port': 6666})
 
     def test_bad_entries_are_named(self):
+        """Bad entries are named."""
         cases = {
             "devices:\n  - {name: a, controller: 1, port: 17}\n": "'input_type' is missing",
             "devices:\n  - {name: a, controller: 1, port: 17, input_type: light}\n": "input_type must be",
@@ -145,6 +164,7 @@ class DeviceFileTests(unittest.TestCase):
             self.assertIn(message, str(cm.exception))
 
     def test_reload_if_changed(self):
+        """Reload if changed."""
         self.write("devices:\n  - {name: a, controller: 1, port: 17, input_type: input_boolean}\n")
         mox_devices._apply(self.path)
         same_list = mox_devices.devices_arr
@@ -168,7 +188,9 @@ class DeviceFileTests(unittest.TestCase):
 
 
 class AppTests(unittest.TestCase):
+    """mox_control and mox_status_requester together: commands, status updates, echoes, rate limits."""
     def setUp(self):
+        """mox_control and mox_status_requester on the example devices, all off or closed, with a fake socket."""
         mox_devices._apply(EXAMPLE)
         self.states = {f"{d['input_type']}.{d['name']}": ('off' if d['input_type'] == 'input_boolean' else '0.0')
                        for d in mox_devices.devices_arr}
@@ -187,24 +209,29 @@ class AppTests(unittest.TestCase):
         Hass.apps.update(mox_control=self.control, mox_status_requester=self.requester)
 
     def receive(self, device, value):
+        """The gateway reports a device state (as a real status reply)."""
         self.requester.handle_status({'packet': status_packet(device, value).hex()})
 
     def test_ha_change_is_sent(self):
+        """Ha change is sent."""
         self.control.turn_on('input_boolean.office_light')
         self.assertEqual(self.control.sock.sent, [('030000c9110100000203' '01', ('172.16.254.254', 6670))])
 
     def test_wall_switch_updates_helper_without_echo(self):
+        """Wall switch updates helper without echo."""
         self.receive(OFFICE_LIGHT, 'on')
         self.assertEqual(self.states['input_boolean.office_light'], 'on')
         self.assertEqual(self.control.sock.sent, [])  # not sent back to Mox
 
     def test_late_report_of_old_state_is_ignored(self):
+        """Late report of old state is ignored."""
         self.receive(OFFICE_LIGHT, 'off')              # Mox: off
         self.control.turn_on('input_boolean.office_light')  # user: on
         self.receive(OFFICE_LIGHT, 'off')              # old report still in flight
         self.assertEqual(self.states['input_boolean.office_light'], 'on')
 
     def test_quick_toggles_are_delayed_not_dropped(self):
+        """Quick toggles are delayed not dropped."""
         self.control.turn_on('input_boolean.office_light')
         self.control.turn_off('input_boolean.office_light')
         self.assertEqual(len(self.control.sock.sent), 1)
@@ -214,6 +241,7 @@ class AppTests(unittest.TestCase):
         self.assertEqual(self.control.sock.sent[-1][0], '030000c9110100000203' '00')
 
     def test_toggle_back_while_delayed_sends_nothing_more(self):
+        """Toggle back while delayed sends nothing more."""
         self.control.turn_on('input_boolean.office_light')
         self.control.turn_off('input_boolean.office_light')
         self.control.turn_on('input_boolean.office_light')
@@ -222,6 +250,7 @@ class AppTests(unittest.TestCase):
         self.assertEqual(len(self.control.sock.sent), 1)
 
     def test_curtain(self):
+        """Curtain."""
         self.receive(CURTAIN, 40)
         self.assertEqual(self.states['input_number.living_room_curtain'], '40.0')
         self.assertEqual(self.control.sock.sent, [])
@@ -229,6 +258,7 @@ class AppTests(unittest.TestCase):
         self.assertEqual(self.control.sock.sent[-1][0], '030001911101000002045000')
 
     def test_wall_switch_turns_away_switch_off(self):
+        """Wall switch turns away switch off."""
         self.requester.away_switch = 'input_boolean.away_from_home'
         self.states['input_boolean.away_from_home'] = 'on'
         self.requester.started = time.time()
@@ -245,6 +275,7 @@ class AppTests(unittest.TestCase):
         self.assertEqual(self.states['input_boolean.away_from_home'], 'off')
 
     def test_poll_covers_every_device(self):
+        """Poll covers every device."""
         self.requester.sock = FakeSocket()
         n = len(mox_devices.devices_arr)
         for _ in range(n):
@@ -253,6 +284,7 @@ class AppTests(unittest.TestCase):
         self.assertEqual(len(polled), n)
 
     def test_device_file_reload_moves_listeners(self):
+        """Device file reload moves listeners."""
         tmp = tempfile.mkdtemp()
         try:
             path = os.path.join(tmp, 'mox_devices.yaml')
@@ -271,7 +303,9 @@ GATEWAY = 'binary_sensor.mox_gateway_online'
 
 
 class MqttTests(unittest.TestCase):
+    """mox_mqtt: discovery, states, commands, availability and device list changes."""
     def setUp(self):
+        """mox_control and mox_mqtt on a three-device list, with a fake MQTT plugin."""
         self.tmp = tempfile.mkdtemp()
         self.path = os.path.join(self.tmp, 'mox_devices.yaml')
         self.write("devices:\n"
@@ -295,19 +329,23 @@ class MqttTests(unittest.TestCase):
         self.mqtt = Hass.mqtt
 
     def tearDown(self):
+        """Removes the plugin, attributes and folder; loads the example device list again."""
         Hass.mqtt = None
         Hass.attributes = {}
         shutil.rmtree(self.tmp)
         mox_devices._apply(EXAMPLE)
 
     def write(self, text):
+        """Writes the test device file."""
         with open(self.path, 'w', encoding='utf-8') as f:
             f.write(text)
 
     def config(self, topic):
+        """The retained discovery payload of `topic`, as a dict."""
         return json.loads(self.mqtt.retained[topic])
 
     def receive_status(self, device, value):
+        """A status report from Mox, through a new mox_status_requester."""
         requester = Mox_status_requester(states=self.states)
         requester.device_states, requester.away_switch, requester.started = {}, None, 0
         requester.confirming = {}
@@ -315,6 +353,7 @@ class MqttTests(unittest.TestCase):
         requester.handle_status({'packet': status_packet(device, value).hex()})
 
     def test_discovery(self):
+        """Discovery."""
         light = self.config('homeassistant/light/mox_office_light/config')
         self.assertEqual(light['default_entity_id'], 'light.office_light')
         self.assertEqual(light['unique_id'], 'mox_201_17')
@@ -329,6 +368,7 @@ class MqttTests(unittest.TestCase):
         self.assertEqual(self.mqtt.retained['mox/gateway/status'], 'online')
 
     def test_states_follow_helpers(self):
+        """States follow helpers."""
         self.assertEqual(self.mqtt.retained['mox/office_light/state'], 'ON')
         self.assertEqual(self.mqtt.retained['mox/living_room_curtain/position'], '40')
         self.receive_status(OFFICE_LIGHT, 'off')  # wall switch
@@ -336,6 +376,7 @@ class MqttTests(unittest.TestCase):
         self.assertEqual(self.control.sock.sent, [])  # not echoed back to Mox
 
     def test_commands_reach_mox(self):
+        """Commands reach mox."""
         self.mqtt.receive('mox/office_ac/set', 'ON')
         self.assertEqual(self.states['input_boolean.office_ac'], 'on')
         self.assertEqual(self.control.sock.sent[-1][0], '030000c9130100000203' '01')
@@ -346,6 +387,7 @@ class MqttTests(unittest.TestCase):
         self.assertEqual(self.mqtt.retained['mox/living_room_curtain/position'], '75')
 
     def test_bad_commands_are_ignored(self):
+        """Bad commands are ignored."""
         for topic, payload in (('mox/office_ac/set', 'maybe'), ('mox/nothing/set', 'ON'),
                                ('mox/living_room_curtain/set_position', '150'),
                                ('mox/office_ac/set', 'STOP'), ('other/office_ac/set', 'ON'),
@@ -356,6 +398,7 @@ class MqttTests(unittest.TestCase):
         self.assertEqual(self.control.sock.sent, [])
 
     def test_stop_and_open_again(self):
+        """Stop and open again."""
         requester = Mox_status_requester(states=self.states)
         requester.device_states, requester.away_switch, requester.started = {}, None, 0
         requester.confirming = {}
@@ -373,6 +416,7 @@ class MqttTests(unittest.TestCase):
         self.assertEqual(self.control.sock.sent[-1][0], '030001911101000002046400')
 
     def test_stop_cancels_a_delayed_command(self):
+        """Stop cancels a delayed command."""
         self.mqtt.receive('mox/living_room_curtain/set_position', '70')
         self.mqtt.receive('mox/living_room_curtain/set_position', '20')  # delayed (rate limit)
         self.mqtt.receive('mox/living_room_curtain/set', 'STOP')
@@ -382,6 +426,7 @@ class MqttTests(unittest.TestCase):
                          ['030001911101000002044600', '07000191110200000402'])
 
     def test_gateway_offline_makes_entities_unavailable(self):
+        """Gateway offline makes entities unavailable."""
         self.states[GATEWAY] = 'off'
         self.app.on_gateway_change(GATEWAY, 'state', 'on', 'off', {})
         self.assertEqual(self.mqtt.retained['mox/gateway/status'], 'offline')
@@ -390,12 +435,14 @@ class MqttTests(unittest.TestCase):
         self.assertEqual(self.mqtt.retained['mox/gateway/status'], 'online')
 
     def test_home_assistant_restart_republishes(self):
+        """Home assistant restart republishes."""
         self.mqtt.retained.clear()
         self.mqtt.receive('homeassistant/status', 'online')
         self.assertIn('homeassistant/light/mox_office_light/config', self.mqtt.retained)
         self.assertEqual(self.mqtt.retained['mox/office_light/state'], 'ON')
 
     def test_device_list_changes(self):
+        """Device list changes."""
         light_topic = 'homeassistant/light/mox_office_light/config'
         self.write("devices:\n"
                    "  - {name: office_light, controller: 201, port: 17, input_type: input_boolean, kind: light,"
@@ -412,6 +459,7 @@ class MqttTests(unittest.TestCase):
         self.assertEqual(self.states['input_number.living_room_curtain'], '40.0')
 
     def test_no_mqtt_plugin(self):
+        """No mqtt plugin."""
         Hass.mqtt = None
         app = Mox_mqtt(states=self.states)
         app.initialize()
@@ -426,6 +474,7 @@ class WallSwitchTests(unittest.TestCase):
     """Mox wall switches driving other covers (captured messages from 2026-11-17)."""
 
     def setUp(self):
+        """mox_switches with two button pairs and one output, and a requester to forward messages."""
         mox_devices._apply(EXAMPLE)
         Hass.apps.clear()
         Hass.services = []
@@ -442,9 +491,11 @@ class WallSwitchTests(unittest.TestCase):
         Hass.apps.update(mox_switches=self.app, mox_status_requester=self.requester)
 
     def tearDown(self):
+        """Removes the test attributes."""
         Hass.attributes = {}
 
     def send(self, packet):
+        """A message from the gateway, routed as mox_status_requester routes it; returns the timers set."""
         self.app.timers.clear()
         if packet.startswith('03'):
             self.requester.handle_status({'packet': packet})  # unknown device: forwarded
@@ -453,9 +504,11 @@ class WallSwitchTests(unittest.TestCase):
         return list(self.app.timers)
 
     def services(self):
+        """The services called so far: (service, entity, position)."""
         return [(s, e, kw.get('position')) for s, e, kw in Hass.services]
 
     def test_long_press_opens(self):
+        """Long press opens."""
         timers = self.send('0200019091010000020301')   # kitchen up pressed
         self.assertEqual(self.services(), [])
         cb, delay, kwargs = timers[0]
@@ -465,6 +518,7 @@ class WallSwitchTests(unittest.TestCase):
         self.assertEqual(self.services(), [('cover/open_cover', KITCHEN, None)])
 
     def test_short_press_moves_a_step(self):
+        """Short press moves a step."""
         timers = self.send('02000190aa010000020301')   # parents down pressed
         self.send('02000190aa010000020302')            # released quickly
         cb, _, kwargs = timers[0]
@@ -472,12 +526,14 @@ class WallSwitchTests(unittest.TestCase):
         self.assertEqual(self.services(), [('cover/set_cover_position', PARENTS, 0)])  # 3% - 5, at least 0
 
     def test_short_opposite_press_while_moving_stops(self):
+        """Short opposite press while moving stops."""
         self.states[KITCHEN] = 'opening'
         self.send('0200019092010000020301')            # kitchen down pressed
         self.send('0200019092010000020302')
         self.assertEqual(self.services(), [('cover/stop_cover', KITCHEN, None)])
 
     def test_repeated_press_is_ignored(self):
+        """Repeated press is ignored."""
         timers = self.send('0200019091010000020301')
         self.send('0200019091010000020301')            # the gateway's repeat
         self.send('0200019091010000020302')
@@ -485,6 +541,7 @@ class WallSwitchTests(unittest.TestCase):
         self.assertEqual(self.services(), [('cover/set_cover_position', KITCHEN, 45)])
 
     def test_output_commands(self):
+        """Output commands."""
         self.send('030001901201000002046400')          # left rocker: go to 100
         self.send('030001901201000002046400')          # repeat
         self.send('07000190120200000402')              # stop
@@ -492,10 +549,12 @@ class WallSwitchTests(unittest.TestCase):
                                            ('cover/stop_cover', LEFT, None)])
 
     def test_messages_before_initialize_are_ignored(self):
+        """Messages before initialize are ignored."""
         app = Mox_switches(states=self.states, args={})
         self.assertFalse(app.handle_packet('07000190120200000402'))
 
     def test_other_messages_are_ignored(self):
+        """Other messages are ignored."""
         self.send('020000cab9010000020301')            # an unconfigured button
         self.send('030001901301000002046400')          # an unconfigured output
         self.send('02000191110100000102')              # a status request
@@ -507,11 +566,13 @@ class ConfirmTests(AppTests):
     """An on/off command is checked with Mox a moment later, and sent again if it was lost."""
 
     def run_confirm_timer(self):
+        """Runs the confirmation timer that mox_control set last."""
         cb, delay, kwargs = self.control.timers[-1]
         self.assertEqual(cb, self.control.confirm_command)
         cb(kwargs)
 
     def test_command_is_confirmed(self):
+        """Command is confirmed."""
         self.control.turn_on('input_boolean.office_light')
         self.run_confirm_timer()
         self.assertEqual(self.requester.sock.sent[-1][0], mox_protocol.status_request(OFFICE_LIGHT).hex())
@@ -520,6 +581,7 @@ class ConfirmTests(AppTests):
         self.assertEqual(self.states['input_boolean.office_light'], 'on')
 
     def test_lost_command_is_sent_again(self):
+        """Lost command is sent again."""
         self.receive(OFFICE_LIGHT, 'off')
         self.control.turn_on('input_boolean.office_light')
         self.run_confirm_timer()
@@ -532,6 +594,7 @@ class ConfirmTests(AppTests):
         self.assertEqual(self.states['input_boolean.office_light'], 'on')
 
     def test_helper_shows_mox_state_after_two_failures(self):
+        """Helper shows mox state after two failures."""
         self.requester.away_switch = 'input_boolean.away_from_home'
         self.states['input_boolean.away_from_home'] = 'on'
         self.receive(OFFICE_LIGHT, 'off')
@@ -545,6 +608,7 @@ class ConfirmTests(AppTests):
         self.assertEqual(self.states['input_boolean.away_from_home'], 'on')  # not a wall switch
 
     def test_replaced_command_is_not_checked(self):
+        """Replaced command is not checked."""
         self.control.turn_on('input_boolean.office_light')
         first = self.control.timers[-1]
         self.control.turn_off('input_boolean.office_light')  # delayed by the rate limit
@@ -552,10 +616,12 @@ class ConfirmTests(AppTests):
         self.assertEqual(self.requester.sock.sent, [])
 
     def test_curtains_are_not_checked(self):
+        """Curtains are not checked."""
         self.control.call_service('input_number/set_value', entity_id='input_number.living_room_curtain', value=80)
         self.assertFalse(any(cb == self.control.confirm_command for cb, _, _ in self.control.timers))
 
     def test_wrong_input_type_is_reported(self):
+        """Wrong input type is reported."""
         wrong = dict(OFFICE_LIGHT, input_type='input_number')
         self.requester.handle_status({'packet': status_packet(wrong, 40).hex()})
         self.assertEqual(self.states['input_boolean.office_light'], 'off')
@@ -568,7 +634,9 @@ FAN = 'input_boolean.parents_fan'
 
 
 class TimerTests(unittest.TestCase):
+    """mox_timers: daily timers and fan swap."""
     def setUp(self):
+        """mox_timers for one air conditioner with a fan, all timers off and unset."""
         Hass.apps.clear()
         self.states = {AC: 'off', 'input_boolean.away_from_home': 'off'}
         for n in (1, 2, 3):
@@ -583,18 +651,22 @@ class TimerTests(unittest.TestCase):
         self.app.initialize()
 
     def tearDown(self):
+        """Back to the real clock."""
         Hass.now = None
 
     def set_timer(self, n, on, off, enabled=True):
+        """Sets timer n to switch on at `on` and off at `off` ('HH:MM')."""
         self.states[f'input_boolean.timer_parents_ac_{n}'] = 'on' if enabled else 'off'
         self.states[f'input_datetime.timer_parents_ac_{n}_on'] = on + ':00'
         self.states[f'input_datetime.timer_parents_ac_{n}_off'] = off + ':00'
 
     def at(self, hhmm):
+        """Runs the timer check at a time of day ('HH:MM')."""
         Hass.now = _dt.datetime(2026, 11, 17, int(hhmm[:2]), int(hhmm[3:]), 5)
         self.app.check({})
 
     def test_on_and_off(self):
+        """On and off."""
         self.set_timer(2, '06:00', '08:00')
         self.at('05:59')
         self.assertEqual(self.states[AC], 'off')
@@ -604,6 +676,7 @@ class TimerTests(unittest.TestCase):
         self.assertEqual(self.states[AC], 'off')
 
     def test_disabled_and_unset_timers_do_nothing(self):
+        """Disabled and unset timers do nothing."""
         self.set_timer(1, '06:00', '08:00', enabled=False)
         self.set_timer(2, '00:00', '00:00')
         self.at('06:00')
@@ -611,6 +684,7 @@ class TimerTests(unittest.TestCase):
         self.assertEqual(self.states[AC], 'off')
 
     def test_away_skips_on_but_not_off(self):
+        """Away skips on but not off."""
         self.set_timer(1, '06:00', '08:00')
         self.states['input_boolean.away_from_home'] = 'on'
         self.at('06:00')
@@ -620,6 +694,7 @@ class TimerTests(unittest.TestCase):
         self.assertEqual(self.states[AC], 'off')
 
     def test_each_minute_runs_once(self):
+        """Each minute runs once."""
         self.set_timer(1, '06:00', '08:00')
         self.at('06:00')
         self.states[AC] = 'off'      # switched off by hand within the same minute
@@ -627,6 +702,7 @@ class TimerTests(unittest.TestCase):
         self.assertEqual(self.states[AC], 'off')
 
     def test_back_to_back_timers_leave_it_on(self):
+        """Back to back timers leave it on."""
         self.set_timer(1, '06:00', '08:00')
         self.set_timer(2, '08:00', '10:00')
         self.at('06:00')
@@ -636,6 +712,7 @@ class TimerTests(unittest.TestCase):
         self.assertEqual(self.states[AC], 'off')
 
     def test_fan_swap(self):
+        """Fan swap."""
         self.states['input_boolean.fan_swap_parents_ac'] = 'on'
         self.set_timer(1, '06:00', '08:00')
         self.at('06:00')                       # AC on
@@ -646,6 +723,7 @@ class TimerTests(unittest.TestCase):
         self.assertEqual(self.states[FAN], 'off')
 
     def test_fan_swap_off_or_away(self):
+        """Fan swap off or away."""
         self.states[AC] = 'on'
         self.app.turn_off(AC)                  # swap switch off: fan untouched
         self.assertEqual(self.states[FAN], 'off')
@@ -656,6 +734,7 @@ class TimerTests(unittest.TestCase):
         self.assertEqual(self.states[FAN], 'off')
 
     def test_overnight(self):
+        """Overnight."""
         self.set_timer(3, '22:00', '02:00')
         self.at('22:00')
         self.assertEqual(self.states[AC], 'on')

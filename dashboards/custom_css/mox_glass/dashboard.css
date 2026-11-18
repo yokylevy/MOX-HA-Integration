@@ -1,3 +1,10 @@
+/*
+ * mox_glass skin for AppDaemon HADashboard: page styles.
+ * Based on AppDaemon 4.5.13's "glassic" skin. Changes: the page background is
+ * background.jpg in this folder (put your own photo there), over a dark blue gradient used
+ * until one is added. Widget colours and the phone-layout switch are in variables.yaml.
+ * To use it without ?skin= in the link, also copy this folder to custom_css/default.
+ */
 @import url('https://fonts.googleapis.com/css?family=Titillium+Web:400,400i,600,700,900');
 
 

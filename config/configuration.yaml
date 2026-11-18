@@ -1,3 +1,11 @@
+# Example Home Assistant configuration.yaml for the Mox integration (an example, not a
+# drop-in file). The parts that matter for Mox:
+#   - input_boolean / input_number: one helper per device in mox_devices.yaml, with the same
+#     name (input_number for curtains: min 0, max 100, step 1), plus refresh_mox_status.
+#   - jewish_calendar: provides binary_sensor.jewish_calendar_issur_melacha_in_effect_*,
+#     used by mox_control's Shabbat recovery (optional).
+#   - http: Home Assistant's own HTTPS certificate (the dashboards can use the same one).
+
 # Configure a default setup of Home Assistant (frontend, api, etc)
 default_config:
 

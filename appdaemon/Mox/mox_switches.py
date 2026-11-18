@@ -33,9 +33,11 @@ STOP_CODE = '0200000402'        # 07 + controller + output + code
 
 
 class Mox_switches(hass.Hass):
+    """AppDaemon app: Mox wall switch messages -> Home Assistant covers (see the module description)."""
     ready = False  # set at the end of initialize(): messages can arrive before it runs
 
     def initialize(self):
+        """Reads long_press, step, buttons and outputs from apps.yaml, then marks the app ready."""
         self.long_press = float(self.args.get('long_press', 0.6))
         self.step = int(self.args.get('step', 5))
         self.buttons = {}   # (controller, button) -> (cover, 'up'/'down')
@@ -95,9 +97,14 @@ class Mox_switches(hass.Hass):
     # ---- buttons ----
 
     def moving(self, cover):
+        """True while the cover reports 'opening' or 'closing'."""
         return self.get_state(cover) in ('opening', 'closing')
 
     def pressed(self, key):
+        """
+        A button went down. If its cover is moving, stop it (the press is then done). Otherwise
+        check after long_press seconds whether the button is still held.
+        """
         if key in self.held:
             return
         cover, direction = self.buttons[key]
@@ -111,6 +118,7 @@ class Mox_switches(hass.Hass):
         self.run_in(self.long_press_check, self.long_press, key=key, token=token)
 
     def long_press_check(self, kwargs):
+        """Timer callback: the button is still held after long_press seconds, so open or close fully."""
         held = self.held.get(kwargs['key'])
         if not held or held['token'] is not kwargs['token'] or held['action']:
             return  # released (short press) or already handled
@@ -123,6 +131,10 @@ class Mox_switches(hass.Hass):
         self.run_in(self.forget, 60, key=kwargs['key'], token=kwargs['token'])
 
     def released(self, key):
+        """
+        A button went up. After a short press on a still cover, move it by `step` percent in the
+        button's direction. Stops and long presses were already handled.
+        """
         held = self.held.pop(key, None)
         if not held or held['action']:
             return  # stop or long press: already done
@@ -137,6 +149,7 @@ class Mox_switches(hass.Hass):
             self.log(f"Wall switch {key[0]}-{key[1]}: {cover} to {target}%", log="mox_log")
 
     def forget(self, kwargs):
+        """Timer callback: forgets a press whose release message never arrived, a minute later."""
         held = self.held.get(kwargs['key'])
         if held and held['token'] is kwargs['token']:
             del self.held[kwargs['key']]

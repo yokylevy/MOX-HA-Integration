@@ -111,6 +111,10 @@ _loaded_mtime = None
 
 
 def _apply(path):
+    """
+    Loads `path` and replaces the contents of devices_arr, esp_devices and gateway in place,
+    so every module that imported them sees the new data, and remembers the file's time.
+    """
     global _loaded_mtime
     mtime = os.path.getmtime(path)
     devices, esp, gw = load_config(path)

@@ -13,17 +13,22 @@ import make_dashboards  # noqa: E402
 
 
 class DashboardTests(unittest.TestCase):
+    """tools/make_dashboards.py: generated pages."""
     def setUp(self):
+        """A temporary output folder."""
         self.out = tempfile.mkdtemp()
 
     def tearDown(self):
+        """Removes the output folder."""
         shutil.rmtree(self.out)
 
     def page(self, name):
+        """A generated page, read back as YAML."""
         with open(os.path.join(self.out, f"{name}.dash"), encoding='utf-8') as f:
             return yaml.safe_load(f)
 
     def test_example(self):
+        """Example."""
         pages = make_dashboards.build(os.path.join(ROOT, 'dashboards', 'rooms.example.yaml'), self.out)
         self.assertEqual(pages, ['Living', 'Living_m', 'Main', 'Main_m', 'Office', 'Office_m'])
         phone = self.page('Living_m')
@@ -57,6 +62,7 @@ class DashboardTests(unittest.TestCase):
         self.assertIn('m0(2x1)', self.page('Main_m')['layout'])
 
     def test_bad_room_id(self):
+        """Bad room id."""
         path = os.path.join(self.out, 'rooms.yaml')
         with open(path, 'w', encoding='utf-8') as f:
             f.write("rooms:\n  - {id: 'bad id', title: x, devices: []}\n")

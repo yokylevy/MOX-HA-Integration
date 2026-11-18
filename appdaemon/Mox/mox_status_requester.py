@@ -1,3 +1,23 @@
+"""
+Mox -> Home Assistant: receives the gateway's status messages and updates the helpers.
+
+- A receive thread reads UDP port listen_port (6666) and hands every message to AppDaemon
+  with run_in(), so all Home Assistant updates run on the app's own thread.
+- The gateway only keeps reporting for a few minutes after being asked, and it reports to
+  whoever asked last, so one device is polled every 30 seconds (poke_mox_servar), and all
+  devices are asked once, 5 seconds after start.
+- Each device change is passed on once: mox_control is told first (note_mox_state) so the
+  helper update isn't sent back to Mox, then the helper is updated.
+- binary_sensor.mox_gateway_online: off when no message has arrived for offline_after
+  seconds (apps.yaml, default 600).
+- Optional away_switch (apps.yaml): turned off when an on/off device changes in Mox without
+  Home Assistant asking, because someone used a wall switch at home.
+- Wall switch messages for replaced controllers (key presses, curtain positions and stops
+  for unknown outputs) are forwarded to the mox_switches app.
+- Answers mox_control's confirmation requests (request_confirmation / command_confirmed).
+- Services: mox_control/request_all_status and mox_control/request_device_status, and the
+  input_boolean.refresh_mox_status button ask Mox for the status of all or one device.
+"""
 import appdaemon.plugins.hass.hassapi as hass
 from mox_devices import devices_arr, gateway, get_device_by_name, get_device_by_controller
 from mox_protocol import status_request, parse_status, switch_value, curtain_value, is_curtain_status
@@ -11,7 +31,13 @@ FORWARDED = ('0100000203', '0100000204', '0200000402')
 
 
 class Mox_status_requester(hass.Hass):
+    """AppDaemon app: updates the helpers from Mox status messages (see the module description)."""
     def initialize(self):
+        """
+        Binds the status port, starts the receive thread, the 30-second poll, the gateway sensor
+        check and the status round 5 seconds after start, and registers the refresh button and
+        the two services.
+        """
         self.device_num = 0  # next device to poll
 
         # The socket is opened here and closed in terminate(), so AppDaemon can
@@ -89,6 +115,7 @@ class Mox_status_requester(hass.Hass):
             self.log("Service call error: device_name parameter missing", log="mox_log")
 
     def send(self, message):
+        """Sends a UDP message (bytes) to the gateway."""
         self.sock.sendto(message, (gateway['ip'], gateway['port']))
 
     def poke_mox_servar(self, kwargs):
@@ -199,6 +226,7 @@ class Mox_status_requester(hass.Hass):
         return app if app and hasattr(app, 'handle_packet') else None
 
     def forward(self, kwargs):
+        """Passes a gateway message (kwargs['packet'], hex) to the mox_switches app, if it is configured."""
         app = self.switches_app()
         if app:
             app.handle_packet(kwargs['packet'])
@@ -261,6 +289,7 @@ class Mox_status_requester(hass.Hass):
         self.sock.close()
 
     def request_all_on_start(self, kwargs):
+        """Timer callback 5 seconds after start: asks for every device, so the helpers catch up quickly."""
         self.request_all_device_status()
 
     def request_confirmation(self, name, attempt):

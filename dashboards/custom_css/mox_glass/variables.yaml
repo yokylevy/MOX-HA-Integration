@@ -1,3 +1,11 @@
+# mox_glass skin for AppDaemon HADashboard: widget styles and page includes.
+# Based on AppDaemon 4.5.13's "glassic" skin. Changes:
+#   - background_style: frosted-glass tiles (translucent, blurred, rounded)
+#   - style_active / style_inactive / style_title: larger icons and titles, yellow when on
+#   - label, navigate, clock and input_datetime styles to match
+#   - head_includes: a script that opens the phone layout (page name + _m, made by
+#     tools/make_dashboards.py) on screens narrower than 700 pixels, and the wide one above
+#
 # Core styles. Reference these wherever possible rather than making custom
 # versions of red, green, etc. This will make it easier to quickly change the
 # overall palette of the dashboard just by overriding these variables.

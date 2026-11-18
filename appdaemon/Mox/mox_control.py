@@ -1,3 +1,23 @@
+"""
+Home Assistant -> Mox: sends a command to the Mox gateway whenever a device's helper changes.
+
+Every device in mox_devices.yaml has a helper in Home Assistant: an input_boolean for an
+on/off output, an input_number (0-100) for a curtain. This app listens to all of them and
+sends the matching UDP message (see mox_protocol.py).
+
+- No feedback loops: mox_state holds the state Mox last reported (via note_mox_state(),
+  called by mox_status_requester) or the state last sent. A helper change that matches it
+  came from Mox itself, a wall switch for example, so nothing is sent.
+- Rate limit: commands to one device are at least min_command_interval (2 s) apart. A change
+  that comes sooner is delayed, never dropped.
+- Confirmation: 2 s after an on/off command, mox_status_requester asks Mox for the
+  device's state. If the command was lost it is sent once more, and if that fails too the
+  helper is set to Mox's real state.
+- Curtain stop: stop_curtain() sends Mox's stop command (used by mox_mqtt for STOP).
+- Shabbat recovery: while RECOVER_SENSOR is on, every helper that is on is sent "on" again
+  each minute, to restore devices after a power cut.
+- mox_devices.yaml is checked every 30 seconds and reloaded when it was saved.
+"""
 import time
 import socket
 import appdaemon.plugins.hass.hassapi as hass
@@ -36,7 +56,12 @@ def same_value(input_type, a, b):
 
 
 class Mox_control(hass.Hass):
+    """AppDaemon app: sends Home Assistant helper changes to Mox (see the module description)."""
     def initialize(self):
+        """
+        Opens the UDP socket, listens to every device helper, and starts the Shabbat
+        recovery (every minute) and the mox_devices.yaml check (every 30 seconds).
+        """
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
         self.last_commands = {}      # device name -> time of the last command sent
@@ -54,6 +79,7 @@ class Mox_control(hass.Hass):
         self.run_every(self.check_devices_file, "now+30", 30)
 
     def terminate(self):
+        """Called by AppDaemon when the app stops or reloads: closes the socket."""
         self.sock.close()
 
     def init_listeners(self):
@@ -218,6 +244,7 @@ class Mox_control(hass.Hass):
             self.run_in(self.request_status, delay, device=name)
 
     def request_status(self, kwargs):
+        """Timer callback: asks mox_status_requester for one device's status (kwargs['device'])."""
         requester = self.get_app("mox_status_requester")
         if requester:
             requester.request_device_status(kwargs['device'])

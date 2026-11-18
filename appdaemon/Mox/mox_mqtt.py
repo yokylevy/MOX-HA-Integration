@@ -20,11 +20,18 @@ GATEWAY_SENSOR = "binary_sensor.mox_gateway_online"
 
 
 def helper_entity(device):
+    """The helper entity id of a device, for example 'input_boolean.office_light'."""
     return f"{device['input_type']}.{device['name']}"
 
 
 class Mox_mqtt(hass.Hass):
+    """AppDaemon app: mirrors the device helpers as MQTT discovery entities (see the module description)."""
     def initialize(self):
+        """
+        Gets the MQTT plugin (does nothing without it), subscribes to the command topics and
+        Home Assistant's status topic, publishes availability, discovery and states, and checks
+        the device list every minute.
+        """
         self.mqtt = self.get_plugin_api("MQTT")
         if self.mqtt is None:
             self.log("MQTT plugin not configured in appdaemon.yaml: Mox MQTT entities are off",
@@ -124,6 +131,7 @@ class Mox_mqtt(hass.Hass):
             self.publish_state(device, self.get_state(helper_entity(device)))
 
     def check_devices(self, kwargs):
+        """Timer callback: publishes device list changes (sync_devices) and logs when something changed."""
         before = set(self.published.values())
         self.sync_devices()
         if set(self.published.values()) != before:
@@ -144,6 +152,10 @@ class Mox_mqtt(hass.Hass):
     # ---- helper -> MQTT ----
 
     def publish_state(self, device, state):
+        """
+        Publishes a helper state as the entity's retained MQTT state: ON/OFF for on/off devices,
+        the position 0-100 for curtains. Unknown or unavailable states are skipped.
+        """
         base = f"{self.prefix}/{device['name']}"
         if device['input_type'] == 'input_number':
             try:
@@ -155,21 +167,31 @@ class Mox_mqtt(hass.Hass):
             self.mqtt.mqtt_publish(f"{base}/state", state.upper(), retain=True)
 
     def on_helper_change(self, entity, attribute, old, new, kwargs):
+        """listen_state callback: a helper changed, so publish its new state."""
         device = next((d for d in devices_arr if d['name'] == kwargs['device_name']), None)
         if device:
             self.publish_state(device, new)
 
     def publish_gateway(self):
         # Online unless the gateway sensor says off (it may not exist yet after a restart).
+        """
+        Publishes <prefix>/gateway/status: 'offline' while binary_sensor.mox_gateway_online
+        is off, 'online' otherwise (also when the sensor doesn't exist yet, after a restart).
+        """
         state = self.get_state(GATEWAY_SENSOR)
         self.mqtt.mqtt_publish(self.gateway_topic, "offline" if state == 'off' else "online", retain=True)
 
     def on_gateway_change(self, entity, attribute, old, new, kwargs):
+        """listen_state callback: the gateway sensor changed, so update the availability topic."""
         self.publish_gateway()
 
     # ---- MQTT -> helper ----
 
     def on_mqtt_message(self, event_name, data, kwargs):
+        """
+        MQTT_MESSAGE callback. Home Assistant's birth message ('online' on <discovery>/status)
+        republishes everything; <prefix>/<name>/set and set_position are passed to command().
+        """
         topic = data.get('topic', '')
         payload = data.get('payload')
         if isinstance(payload, bytes):
@@ -189,6 +211,11 @@ class Mox_mqtt(hass.Hass):
         self.command(device, parts[2], payload)
 
     def command(self, device, what, payload):
+        """
+        Applies an MQTT command to the device's helper: ON/OFF for on/off devices; OPEN, CLOSE,
+        STOP or a 0-100 position for curtains. Invalid commands are ignored. A position equal to
+        the helper's value is still sent through mox_control (after a stop the real position differs).
+        """
         entity = helper_entity(device)
         if device['input_type'] == 'input_number':
             if what == 'set_position':
@@ -230,5 +257,6 @@ class Mox_mqtt(hass.Hass):
         self.log(f"MQTT command: {device['name']} {payload}", log="mox_log")
 
     def terminate(self):
+        """Called when the app stops: publishes 'offline' so the entities show as unavailable."""
         if getattr(self, 'mqtt', None) is not None:
             self.mqtt.mqtt_publish(self.bridge_topic, "offline", retain=True)

@@ -1,31 +1,69 @@
 # MOX-HA-Integration
 
-Control a [Mox](http://www.mox.com.au/lt/index.htm) smart home system from [Home Assistant](https://www.home-assistant.io/), using two [AppDaemon](https://appdaemon.readthedocs.io/) apps.
+Control a [Mox](http://www.mox.com.au/lt/index.htm) smart home system from [Home Assistant](https://www.home-assistant.io/), using a set of [AppDaemon](https://appdaemon.readthedocs.io/) apps, with optional MQTT entities, room dashboards and timers.
 
-Mox controllers don't speak any standard IoT protocol, but the Mox gateway accepts simple UDP messages on the local network. This project turns every Mox output into a Home Assistant helper:
+Mox is an Australian home automation system: controllers in the electrical board switch the lights, ceiling fans, air conditioners and boilers, and move the curtains, and wall keypads and a touch panel control them. Mox doesn't speak any standard IoT protocol, but its gateway accepts simple UDP messages on the local network. This project speaks that protocol, so Home Assistant becomes the Mox system's brain: every Mox output appears in Home Assistant, follows the wall switches in real time, and can be used by any automation, dashboard or voice assistant.
 
-- **On/off outputs** (lights, ceiling fans, air conditioners, boilers) become `input_boolean` helpers.
-- **Curtain outputs** become `input_number` helpers (0-100, 100 = open).
+## Features
 
-Changing a helper in Home Assistant switches the real device, and using a wall switch updates the helper, so the dashboard always shows the real state and any Home Assistant automation can drive the Mox system.
+- **Every Mox output in Home Assistant.** On/off outputs (lights, fans, air conditioners, boilers) are `input_boolean` helpers, and curtains are `input_number` helpers (0-100, 100 = open). Changing a helper switches the device. Using a wall switch updates the helper within a second, so Home Assistant always shows the real state.
+- **Reliable two-way sync.** There are no feedback loops: a change that came from Mox isn't sent back. Quick toggles are delayed, never dropped. Every on/off command is checked and sent again if it was lost. After a restart, all states are refreshed within seconds.
+- **Real entities through MQTT (optional).** Each device is also a proper `light`, `fan`, `switch` or `cover`, with a curtain **stop** button (Mox's own stop command). They work with areas, "turn off all lights", voice assistants and HomeKit / Google bridges. When the gateway is offline, they show as unavailable.
+- **Gateway monitoring.** `binary_sensor.mox_gateway_online` goes off when Mox stops answering, ready for an alert automation.
+- **Wall switches for replaced controllers (optional).** If a Mox curtain controller was replaced, for example by a KinCony F16 running ESPHome, its Mox wall switches can drive the new covers: hold to open or close, a short press to stop, a short press to nudge, just like Mox.
+- **Daily timers (optional).** Several on/off times per device, for example the air conditioners, set from the dashboard. Optionally the room fan comes on when the air conditioner goes off (fan swap).
+- **"Away from home" (optional).** A helper that any Mox wall switch turns off, because someone is home. Automations can skip things while you're away.
+- **Shabbat and holidays (optional).** While the Jewish Calendar's *issur melacha* sensor is on, devices that should be on are switched on again after a power cut.
+- **Room dashboards (optional).** `tools/make_dashboards.py` builds AppDaemon HADashboard pages from a short rooms file: a main page with a tile per room, and a page per room with its lights, fans, switches, curtains (▲ ■ ▼) and timers. There's a frosted-glass skin with a background picture and a phone layout chosen automatically, and HTTPS and a password are supported.
+- **Your data stays yours.** The device list (controllers, outputs, names) is a YAML file outside the code. The repository holds only code and examples.
 
-## How it works
+## Architecture
 
-| File | What it does |
-|------|--------------|
-| `appdaemon/Mox/mox_control.py` | Listens for changes to the helpers and sends the matching command to the Mox gateway. A change that matches the state Mox last reported isn't sent (no feedback loops), and a second command to the same device within 2 seconds is delayed, never dropped. |
-| `appdaemon/Mox/mox_status_requester.py` | Polls the gateway every 30 seconds so it keeps reporting, listens for status messages and updates the helpers. Publishes `binary_sensor.mox_gateway_online`. |
-| `appdaemon/Mox/mox_mqtt.py` | Optional: publishes every device to Home Assistant through MQTT as a light, fan, switch or cover (see below). |
-| `appdaemon/Mox/mox_switches.py` | Optional: connects Mox wall switches to other covers, when their Mox controller was replaced (see below). |
-| `appdaemon/Mox/mox_timers.py` | Optional: daily on/off timers set from the dashboard (see below). |
-| `appdaemon/Mox/mox_protocol.py` | Builds the UDP messages and reads the status replies (see the table below). |
-| `appdaemon/Mox/mox_devices.py` | Loads and checks the device list and gateway address from `mox_data/mox_devices.yaml`, and reloads it when the file changes. |
-| `appdaemon/Mox/apps.yaml` | Registers the apps with AppDaemon. |
-| `mox_data/mox_devices.example.yaml` | Example device list: copy it to `mox_devices.yaml` and fill in your devices. |
-| `config/configuration.yaml` | Example Home Assistant helpers for the devices. |
-| `tests/` | Unit tests (no Home Assistant needed): `pip install pyyaml`, then `python -m unittest discover tests`. |
+```
+  Home Assistant                            AppDaemon add-on                          Mox
+ ┌──────────────────────┐   state changes  ┌──────────────────────┐   UDP 6670    ┌──────────────┐
+ │ input_boolean.*      │ ───────────────▶ │ mox_control          │ ────────────▶ │              │
+ │ input_number.*       │                  │  commands, rate      │               │   Mox        │
+ │ (one per Mox output) │ ◀─────────────── │  limit, confirmation │               │   gateway    │
+ │                      │   helper updates │ mox_status_requester │ ◀──────────── │              │
+ │ binary_sensor.       │ ◀─────────────── │  polls, receives,    │   UDP 6666    │  controllers │
+ │  mox_gateway_online  │                  │  gateway sensor      │  (statuses,   │  wall keys   │
+ │                      │                  │ mox_switches         │   key presses)│  panel       │
+ │ light/fan/switch/    │   MQTT discovery │ mox_mqtt ─ Mosquitto │               └──────────────┘
+ │ cover.* (optional)   │ ◀──────────────▶ │ mox_timers           │
+ └──────────────────────┘                  └──────────────────────┘
+            ▲                                         ▲
+            │ dashboards, automations,                │ mox_data/mox_devices.yaml
+            │ voice assistants                        │ (device list, reloaded on save)
+```
 
-### The Mox protocol
+- **Commands (Home Assistant → Mox).** A helper changes, from the dashboard, an automation, an MQTT entity or the timers. `mox_control` sends the matching UDP message to the gateway, then checks 2 seconds later that the device really switched.
+- **Statuses (Mox → Home Assistant).** The gateway reports device states to whoever asked it last, for a few minutes after a request, so `mox_status_requester` asks about one device every 30 seconds. Each reported change first tells `mox_control` ("this came from Mox, don't send it back") and then updates the helper.
+- **The helpers are the single source of truth.** MQTT entities, timers and dashboards all read and write the helpers, so every part stays consistent, and each optional app can be removed on its own.
+
+## Repository contents
+
+| Path | What it is |
+|------|------------|
+| `appdaemon/Mox/mox_control.py` | **Required app.** Home Assistant → Mox: sends helper changes to the gateway, with feedback-loop protection, a 2-second rate limit (delayed, never dropped), command confirmation and resend, curtain stop, Shabbat recovery, and device list reload. |
+| `appdaemon/Mox/mox_status_requester.py` | **Required app.** Mox → Home Assistant: receives status messages on UDP 6666, updates the helpers, polls the gateway so it keeps reporting, publishes `binary_sensor.mox_gateway_online`, handles the "away from home" switch, and forwards wall switch messages to `mox_switches`. |
+| `appdaemon/Mox/mox_protocol.py` | The Mox UDP protocol: builds switch, curtain, stop and status-request messages, and parses status replies (see [The Mox protocol](#the-mox-protocol)). Plain Python, unit tested. |
+| `appdaemon/Mox/mox_devices.py` | Loads and validates `mox_devices.yaml` (devices, gateway address, optional `kind`/`title`/`icon`), and reloads it in place when the file is saved. |
+| `appdaemon/Mox/mox_mqtt.py` | Optional app: publishes every device through MQTT discovery as a light, fan, switch or cover, mirrors the helpers, and passes MQTT commands back (including curtain STOP). |
+| `appdaemon/Mox/mox_switches.py` | Optional app: Mox wall switches of replaced controllers → other Home Assistant covers (keypad buttons with long/short press behaviour, and switches that command old outputs directly). |
+| `appdaemon/Mox/mox_timers.py` | Optional app: daily on/off timers per device from dashboard helpers, and the fan swap. |
+| `appdaemon/Mox/apps.yaml` | Registers the apps with AppDaemon. Every option is listed as a comment. |
+| `mox_data/mox_devices.example.yaml` | Example device list. Copy it to `mox_devices.yaml` (kept outside the repository) and list your devices. |
+| `config/configuration.yaml` | Example Home Assistant configuration: helpers for the devices, Jewish Calendar, HTTPS. |
+| `tools/make_dashboards.py` | Generates the HADashboard pages (wide and phone layouts) from a rooms file. |
+| `dashboards/rooms.example.yaml` | Example rooms file for `make_dashboards.py`. |
+| `dashboards/custom_css/mox_glass/` | The frosted-glass dashboard skin (based on AppDaemon's *glassic*), with a background picture and the automatic phone layout switch. |
+| `dashboards/custom_widgets/` | Dashboard widgets: `cover_up` / `cover_stop` / `cover_down` buttons, and `confirm_switch` (asks "are you sure?" before switching; built on `baseconfirmswitch/`). |
+| `tests/` | Unit tests for the apps and the dashboard generator, with a small fake AppDaemon (`tests/fake_appdaemon`), so no Home Assistant or Mox is needed: `pip install pyyaml`, then `python -m unittest discover tests`. |
+
+The rest of this README covers the protocol, installation, every optional feature and troubleshooting. The history of the project is at the end, in [Background](#background).
+
+## The Mox protocol
 
 The gateway listens on UDP port **6670**. Each Mox controller has a number and 8 outputs numbered **17-24**. Messages are hex bytes:
 
@@ -46,6 +84,9 @@ After every on/off command, `mox_control` asks Mox for that device's status 2 se
 
 - Home Assistant OS or Supervised, with the **AppDaemon** add-on installed (AppDaemon 4.x).
 - The Mox gateway reachable from the Home Assistant host. Its address defaults to `172.16.254.254`; to change it, add a `gateway:` section to `mox_devices.yaml` (see the example file).
+- Optional, for the MQTT entities: the **Mosquitto broker** add-on and the **MQTT** integration.
+- Optional, for the Shabbat recovery: the **Jewish Calendar** integration.
+- Optional, to generate dashboards or run the tests: Python 3 with PyYAML (`pip install pyyaml`) on any computer.
 
 ## Deployment
 

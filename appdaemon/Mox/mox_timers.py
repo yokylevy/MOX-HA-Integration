@@ -28,7 +28,12 @@ import appdaemon.plugins.hass.hassapi as hass
 
 
 class Mox_timers(hass.Hass):
+    """AppDaemon app: daily on/off timers and fan swap (see the module description)."""
     def initialize(self):
+        """
+        Reads slots, away_switch, devices and fans from apps.yaml, listens to the devices with a
+        fan, checks the timers every 20 seconds, and warns about helpers that don't exist.
+        """
         self.slots = int(self.args.get('slots', 3))
         self.away_switch = self.args.get('away_switch')
         self.devices = list(self.args.get('devices') or [])
@@ -59,6 +64,7 @@ class Mox_timers(hass.Hass):
 
     @staticmethod
     def swap_switch(device):
+        """The fan swap switch of a device, for example 'input_boolean.fan_swap_parents_ac'."""
         return f"input_boolean.fan_swap_{device.split('.', 1)[1]}"
 
     def device_changed(self, entity, attribute, old, new, kwargs):
@@ -81,6 +87,7 @@ class Mox_timers(hass.Hass):
             self.log(f"Fan swap: {entity} on, {fan} off", log="mox_log")
 
     def check(self, kwargs):
+        """Timer callback every 20 seconds: runs every device's timers once for each new minute."""
         minute = self.datetime().strftime('%H:%M')
         if minute == self.last_minute:
             return
@@ -89,6 +96,10 @@ class Mox_timers(hass.Hass):
             self.run_timers(device, minute)
 
     def run_timers(self, device, minute):
+        """
+        Switches one device for its enabled timers whose time is `minute` ('HH:MM'). If one timer
+        starts as another ends, the device is left as it is. 'On' is skipped while away.
+        """
         turn_on = turn_off = None
         for n in range(1, self.slots + 1):
             if self.get_state(self.helper(device, n)) != 'on':

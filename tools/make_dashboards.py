@@ -44,10 +44,15 @@ TILE_ICONS = {'light': 'mdi-lightbulb', 'fan': 'mdi-fan', 'switch': 'mdi-power',
 
 
 def quote(text):
+    """Text as a double-quoted YAML string (Hebrew and other text stay readable)."""
     return '"' + str(text).replace('\\', '\\\\').replace('"', '\\"') + '"'
 
 
 def device_spec(item):
+    """
+    A device entry (an entity id, or a mapping with 'entity' and options) as a dict with
+    'entity' and 'domain'. Raises ValueError for a bad entity id.
+    """
     spec = {'entity': item} if isinstance(item, str) else dict(item)
     if not re.match(r'^\w+\.\w+$', spec.get('entity', '')):
         raise ValueError(f"bad device entry: {item}")
@@ -56,6 +61,7 @@ def device_spec(item):
 
 
 def header(title, skin, layout):
+    """The page settings: title, tile size and margins, columns, rows and skin."""
     return [f"title: {quote(title)}", f"widget_dimensions: {layout['size']}",
             f"widget_margins: {layout['margins']}", f"columns: {layout['columns']}",
             "rows: 80",  # gridster's default is 15: tiles below it get squeezed into gaps
@@ -63,10 +69,15 @@ def header(title, skin, layout):
 
 
 def widget(name, lines):
+    """A widget definition: its name and indented settings, as YAML lines."""
     return [f"{name}:"] + [f"    {line}" for line in lines] + [""]
 
 
 def tiles_layout(names, per_row, size='2x2'):
+    """
+    Layout rows with up to `per_row` widgets of `size` each. After a row of 2-high tiles an
+    'empty: 1' row is added, because the layout engine moves one row per layout line.
+    """
     rows = []
     for i in range(0, len(names), per_row):
         rows.append("    - " + ", ".join(f"{n}({size})" for n in names[i:i + per_row]))
@@ -76,6 +87,10 @@ def tiles_layout(names, per_row, size='2x2'):
 
 
 def switch_widget(name, spec):
+    """
+    Widget lines for a light, fan or switch tile, or a confirm_switch when the device has
+    confirm_on / confirm_off texts.
+    """
     title = [f"title: {quote(spec['title'])}"] if spec.get('title') else []
     icon = spec.get('icon', TILE_ICONS.get(spec['domain'], 'mdi-power'))
     lines = ["widget_type: switch", f"entity: {spec['entity']}", f"icon_on: {icon}", f"icon_off: {icon}"]
@@ -119,6 +134,7 @@ def timer_section(config, spec, base, variant):
 
 
 def main_page(config, variant=''):
+    """The main page in one layout: title, clock, house-wide buttons (main_devices) and a tile per room."""
     layout = LAYOUTS[variant]
     out = header(config.get('title', 'Home'), config.get('skin', 'mox_glass'), layout)
     out += widget('page_title', ["widget_type: label", f"text: {quote(config.get('title', 'Home'))}"])
@@ -149,6 +165,10 @@ def main_page(config, variant=''):
 
 
 def room_page(config, room, variant=''):
+    """
+    A room page in one layout: home button and title, device tiles, a row per curtain
+    (name + up/stop/down) and the timer rows.
+    """
     layout = LAYOUTS[variant]
     out = header(room['title'], config.get('skin', 'mox_glass'), layout)
     out += widget('home', ["widget_type: navigate", f"title: {quote(config.get('home_title', 'Home'))}",
@@ -189,6 +209,10 @@ def room_page(config, room, variant=''):
 
 
 def build(config_path, out_dir):
+    """
+    Reads the rooms file, checks the page ids and writes every page in both layouts to out_dir.
+    Returns the page names.
+    """
     with open(config_path, encoding='utf-8') as f:
         config = yaml.safe_load(f)
     main = config.get('main', 'Main')

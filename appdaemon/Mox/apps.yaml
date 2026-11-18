@@ -1,14 +1,49 @@
 ---
+# AppDaemon app registrations for the Mox integration. Copy this folder (apps/mox) to the
+# AppDaemon add-on's apps folder; AppDaemon reloads the apps when this file or a .py file changes.
+# The device list itself is in mox_data/mox_devices.yaml, outside the apps folder.
+# Every option below is optional unless marked "required"; see README.md for details.
+
+# Home Assistant -> Mox: sends a command when a device's helper changes. Required.
 mox_control:
   class: Mox_control
   module: mox_control
 
+# Mox -> Home Assistant: receives status messages and updates the helpers. Required.
 mox_status_requester:
   class: Mox_status_requester
   module: mox_status_requester
+  # offline_after: 600                          # seconds without a Mox message before
+  #                                             # binary_sensor.mox_gateway_online turns off
+  # away_switch: input_boolean.away_from_home   # turned off when a wall switch is used
 
 # Optional: Mox devices as MQTT lights, fans, switches and covers.
 # Needs the MQTT plugin in appdaemon.yaml (see README); without it this app only logs a note.
 mox_mqtt:
   class: Mox_mqtt
   module: mox_mqtt
+  # topic_prefix: mox                           # topics: mox/<device>/state, /set, ...
+  # discovery_prefix: homeassistant             # Home Assistant's MQTT discovery prefix
+
+# Optional: Mox wall switches driving other covers, after a Mox controller was replaced.
+# Uncomment and fill in your switches' numbers (see README: "Mox wall switches for other curtains").
+# mox_switches:
+#   module: mox_switches
+#   class: Mox_switches
+#   long_press: 0.6                             # seconds held before it counts as a long press
+#   step: 5                                     # percent moved by a short press
+#   buttons:                                    # keypad button pairs
+#     - {controller: 400, up: 169, down: 170, cover: cover.bedroom_curtain}
+#   outputs:                                    # switches that command an old output directly
+#     - {controller: 400, port: 18, cover: cover.kitchen_curtain}
+
+# Optional: daily on/off timers set from the dashboards (see README: "daily timers").
+# mox_timers:
+#   module: mox_timers
+#   class: Mox_timers
+#   slots: 3                                    # timers per device
+#   away_switch: input_boolean.away_from_home   # "on" times are skipped while away
+#   devices:
+#     - input_boolean.bedroom_ac
+#   fans:                                       # optional fan swap: AC off -> fan on
+#     input_boolean.bedroom_ac: input_boolean.bedroom_fan

@@ -245,8 +245,9 @@ class Mox_status_requester(hass.Hass):
     def check_gateway(self, kwargs):
         """
         Publishes binary_sensor.mox_gateway_online: on while Mox messages keep arriving,
-        off when none has arrived for offline_after seconds. Published when the state
-        changes, and every 10 minutes so the sensor comes back after a Home Assistant restart.
+        off when none has arrived for offline_after seconds. Published every minute, so the
+        last_message and messages_received attributes stay current and the sensor comes back
+        after a Home Assistant restart.
         """
         now = time.time()
         last = self.last_message
@@ -258,8 +259,6 @@ class Mox_status_requester(hass.Hass):
             if self.gateway_online is not None or not online:
                 self.log(f"Mox gateway is {'online' if online else 'OFFLINE'}"
                          f" (last message {self.format_time(last)})", log="mox_log")
-        elif now - self.gateway_published < 600:
-            return
 
         self.set_state("binary_sensor.mox_gateway_online",
                        state="on" if online else "off",

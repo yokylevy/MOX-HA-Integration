@@ -274,6 +274,16 @@ class AppTests(unittest.TestCase):
         self.receive(OFFICE_LIGHT, 'off')  # wall switch
         self.assertEqual(self.states['input_boolean.away_from_home'], 'off')
 
+    def test_gateway_sensor_updates_every_minute(self):
+        """The gateway sensor's attributes are published on every check, not only on changes."""
+        self.requester.offline_after, self.requester.gateway_online = 600, None
+        self.requester.gateway_published, self.requester.published = 0, []
+        for count in (5, 9):
+            self.requester.last_message, self.requester.messages_received = time.time(), count
+            self.requester.check_gateway({})
+        self.assertEqual([(s, a['messages_received']) for _, s, a in self.requester.published],
+                         [('on', 5), ('on', 9)])
+
     def test_poll_covers_every_device(self):
         """Poll covers every device."""
         self.requester.sock = FakeSocket()

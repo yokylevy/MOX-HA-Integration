@@ -30,7 +30,8 @@ class DashboardTests(unittest.TestCase):
     def test_example(self):
         """Example."""
         pages = make_dashboards.build(os.path.join(ROOT, 'dashboards', 'rooms.example.yaml'), self.out)
-        self.assertEqual(pages, ['Living', 'Living_m', 'Main', 'Main_m', 'Office', 'Office_m'])
+        self.assertEqual(pages, ['Guests', 'Guests_m', 'Living', 'Living_m', 'Main', 'Main_m',
+                                 'Office', 'Office_m'])
         phone = self.page('Living_m')
         self.assertEqual(phone['columns'], 4)
         self.assertEqual(phone['rows'], 80)  # long pages: gridster's default is 15
@@ -60,6 +61,16 @@ class DashboardTests(unittest.TestCase):
         self.assertNotIn('t1_fan', living)
         self.assertIn('m0(2x1), spacer(4x1)', main['layout'])
         self.assertIn('m0(2x1)', self.page('Main_m')['layout'])
+
+    def test_standalone(self):
+        """A standalone page has no home button and no tile on the main page."""
+        make_dashboards.build(os.path.join(ROOT, 'dashboards', 'rooms.example.yaml'), self.out)
+        for variant in ('', '_m'):
+            guests = self.page('Guests' + variant)
+            self.assertNotIn('home', guests)
+            self.assertNotIn('home', guests['layout'][0])
+            self.assertEqual(guests['d0']['entity'], 'light.guest_parking')
+            self.assertNotIn('go_guests', self.page('Main' + variant))
 
     def test_bad_room_id(self):
         """Bad room id."""

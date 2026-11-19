@@ -26,6 +26,10 @@ rooms.yaml (see dashboards/rooms.example.yaml):
           - {entity: switch.office_ac, title: AC, icon: mdi-air-conditioner, timers: 3,   # daily timers
              fan_swap: true}   # switch: fan on when the AC goes off (mox_timers fans)
           - {entity: cover.living_room_curtain, title: Curtain}
+      - id: Guests
+        title: Guest unit
+        standalone: true    # its own page: no tile on the main page, no button back to it
+        devices: [light.guest_parking]
 """
 import os
 import re
@@ -147,6 +151,8 @@ def main_page(config, variant=''):
         buttons.append(f"m{n}")
     names = []
     for room in config['rooms']:
+        if room.get('standalone'):  # a page of its own, not linked from the main page
+            continue
         name = f"go_{room['id'].lower()}"
         names.append(name)
         out += widget(name, ["widget_type: navigate", f"title: {quote(room['title'])}",
@@ -167,13 +173,15 @@ def main_page(config, variant=''):
 def room_page(config, room, variant=''):
     """
     A room page in one layout: home button and title, device tiles, a row per curtain
-    (name + up/stop/down) and the timer rows.
+    (name + up/stop/down) and the timer rows. A 'standalone' room has no home button.
     """
     layout = LAYOUTS[variant]
+    standalone = bool(room.get('standalone'))
     out = header(room['title'], config.get('skin', 'mox_glass'), layout)
-    out += widget('home', ["widget_type: navigate", f"title: {quote(config.get('home_title', 'Home'))}",
-                           f"dashboard: {config.get('main', 'Main')}{variant}",
-                           "icon_inactive: mdi-home"])
+    if not standalone:
+        out += widget('home', ["widget_type: navigate", f"title: {quote(config.get('home_title', 'Home'))}",
+                               f"dashboard: {config.get('main', 'Main')}{variant}",
+                               "icon_inactive: mdi-home"])
     out += widget('page_title', ["widget_type: label", f"text: {quote(room['title'])}"])
     tiles, curtains = [], []
     for n, spec in enumerate(device_spec(d) for d in room.get('devices', [])):
@@ -196,7 +204,8 @@ def room_page(config, room, variant=''):
         out_rows, widgets = timer_section(config, spec, f"t{n}", variant)
         out += widgets
         timer_rows += out_rows
-    out += ["layout:", f"    - home(1x1), page_title({layout['columns'] - 1}x1)"]
+    out += ["layout:", f"    - page_title({layout['columns']}x1)" if standalone
+            else f"    - home(1x1), page_title({layout['columns'] - 1}x1)"]
     out += tiles_layout(tiles, layout['tiles_per_row'])
     for base in curtains:
         if variant == PHONE:  # name on its own row, then the buttons under it

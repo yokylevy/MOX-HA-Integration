@@ -207,7 +207,7 @@ AppDaemon reads the certificate when it starts, so restart the add-on after the 
 
 ### Optional: daily timers (for example for air conditioners)
 
-The `mox_timers` app switches devices on and off at times set on the dashboard. Each device gets `slots` timers. Each timer is three helpers named after the device: `input_boolean.timer_<name>_<n>` (enabled), and `input_datetime.timer_<name>_<n>_on` and `_off` (time only). Create them under Settings > Helpers, or with the helper API. Times repeat every day, and a timer can run past midnight. While `away_switch` is on, "on" times are skipped and "off" times still run. After creating helpers, restart AppDaemon: it only knows entities that existed when it started (`mox.log` warns about missing ones). In the rooms file, `timers: 3` on a device adds its timer rows to the room page. `mox.log` shows `Timer 2: input_boolean.parents_ac on`. Optional `fans:` (device → fan) adds a fan swap: while `input_boolean.fan_swap_<device>` is on, the fan goes on when the device goes off and off when it goes on (not on while away). `fan_swap: true` in the rooms file shows its switch under the timers.
+The `mox_timers` app switches devices on and off at times set on the dashboard. Each device gets `slots` timers, unless its line in `devices` gives its own number (`- light.bedroom_light: 1`). Each timer is three helpers named after the device: `input_boolean.timer_<name>_<n>` (enabled), and `input_datetime.timer_<name>_<n>_on` and `_off` (time only). Create them under Settings > Helpers, or with the helper API. Times repeat every day, and a timer can run past midnight. While `away_switch` is on, "on" times are skipped and "off" times still run. After creating helpers, restart AppDaemon: it only knows entities that existed when it started (`mox.log` warns about missing ones). In the rooms file, `timers: 3` on a device adds its timer rows to the room page. `mox.log` shows `Timer 2: input_boolean.parents_ac on`. Optional `fans:` (device → fan) adds a fan swap: while `input_boolean.fan_swap_<device>` is on, the fan goes on when the device goes off and off when it goes on (not on while away). `fan_swap: true` in the rooms file shows its switch under the timers.
 
 ```yaml
 mox_timers:
@@ -217,6 +217,7 @@ mox_timers:
   away_switch: input_boolean.away_from_home
   devices:
     - input_boolean.parents_ac
+    - light.parents_light: 1   # one timer for this light
 ```
 
 ### Gateway online sensor and alert

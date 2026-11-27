@@ -743,6 +743,22 @@ class TimerTests(unittest.TestCase):
         self.app.turn_off(AC)                  # away: fan not switched on
         self.assertEqual(self.states[FAN], 'off')
 
+    def test_device_with_its_own_number_of_timers(self):
+        """A device listed as 'device: 1' gets one timer; the others keep `slots`."""
+        light = 'light.parents_light'
+        self.states.update({light: 'off', 'input_boolean.timer_parents_light_1': 'on',
+                            'input_datetime.timer_parents_light_1_on': '19:00:00',
+                            'input_datetime.timer_parents_light_1_off': '23:00:00'})
+        app = Mox_timers(states=self.states, args={'devices': [AC, {light: 1}], 'slots': 3})
+        app.initialize()   # no timer 2 or 3 helpers for the light: no warning, no error
+        self.assertEqual(app.device_slots, {AC: 3, light: 1})
+        Hass.now = _dt.datetime(2026, 11, 17, 19, 0, 5)
+        app.check({})
+        self.assertEqual(self.states[light], 'on')
+        Hass.now = _dt.datetime(2026, 11, 17, 23, 0, 5)
+        app.check({})
+        self.assertEqual(self.states[light], 'off')
+
     def test_overnight(self):
         """Overnight."""
         self.set_timer(3, '22:00', '02:00')

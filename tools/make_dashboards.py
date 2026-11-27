@@ -108,19 +108,24 @@ def switch_widget(name, spec):
 def timer_section(config, spec, base, variant):
     """
         Timer rows for a device with 'timers: N' (run by the mox_timers app): a label, then for
-        each timer its enable switch and its on and off times. Returns (layout rows, widget lines).
+        each timer its enable switch and its on and off times. With one timer there is no label row
+        and the switch is named after the device ('Timer Light'). Returns (layout rows, widget lines).
     """
     name = spec['entity'].split('.', 1)[1]
     texts = {'label': 'Timers', 'timer': 'Timer', 'on': 'On', 'off': 'Off', 'fan_swap': 'Fan when AC is off'}
     texts.update(config.get('timer_texts') or {})
-    widgets = widget(f"{base}_label", ["widget_type: label",
-                                       f"text: {quote(texts['label'] + ' - ' + spec.get('title', name))}",
-                                       'text_style: "color: #ffffff; font-size: 140%; font-weight: 600"'])
-    rows = [f"    - {base}_label({LAYOUTS[variant]['columns']}x1)"]
-    for n in range(1, int(spec['timers']) + 1):
+    count = int(spec['timers'])
+    widgets, rows = [], []
+    if count > 1:
+        widgets = widget(f"{base}_label", ["widget_type: label",
+                                           f"text: {quote(texts['label'] + ' - ' + spec.get('title', name))}",
+                                           'text_style: "color: #ffffff; font-size: 140%; font-weight: 600"'])
+        rows = [f"    - {base}_label({LAYOUTS[variant]['columns']}x1)"]
+    for n in range(1, count + 1):
+        title = texts['timer'] + ' ' + (str(n) if count > 1 else spec.get('title', name))
         widgets += widget(f"{base}_{n}", ["widget_type: switch", f"entity: input_boolean.timer_{name}_{n}",
                                           "icon_on: mdi-timer-outline", "icon_off: mdi-timer-off-outline",
-                                          f"title: {quote(texts['timer'] + ' ' + str(n))}"])
+                                          f"title: {quote(title)}"])
         for kind in ('on', 'off'):
             widgets += widget(f"{base}_{n}_{kind}", ["widget_type: input_datetime",
                                                      f"entity: input_datetime.timer_{name}_{n}_{kind}",

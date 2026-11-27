@@ -21,6 +21,7 @@ mox_timers:
   away_switch: input_boolean.away_from_home   # optional
   devices:
     - input_boolean.parents_ac
+    - light.parents_light: 1                    # optional: this device's own number of timers
   fans:                                         # optional
     input_boolean.parents_ac: input_boolean.parents_fan
 """
@@ -36,15 +37,20 @@ class Mox_timers(hass.Hass):
         """
         self.slots = int(self.args.get('slots', 3))
         self.away_switch = self.args.get('away_switch')
-        self.devices = list(self.args.get('devices') or [])
+        self.device_slots = {}  # device -> its number of timers ('device: N' in the list)
+        for item in self.args.get('devices') or []:
+            for device, slots in (item.items() if isinstance(item, dict) else [(item, self.slots)]):
+                self.device_slots[device] = int(slots)
+        self.devices = list(self.device_slots)
         self.fans = dict(self.args.get('fans') or {})
         for device in self.fans:
             self.listen_state(self.device_changed, device)
         self.last_minute = None
         # Every 20 seconds, so a slow or skipped call never misses a minute; each minute runs once.
         self.run_every(self.check, "now", 20)
-        self.log(f"Timers: {len(self.devices)} devices, {self.slots} timers each", log="mox_log")
-        missing = [h for d in self.devices for n in range(1, self.slots + 1)
+        self.log(f"Timers: {len(self.devices)} devices, {sum(self.device_slots.values())} timers",
+                 log="mox_log")
+        missing = [h for d in self.devices for n in range(1, self.device_slots[d] + 1)
                    for h in (self.helper(d, n), self.helper(d, n, 'on'), self.helper(d, n, 'off'))
                    if self.get_state(h) is None]
         missing += [self.swap_switch(d) for d in self.fans if self.get_state(self.swap_switch(d)) is None]
@@ -101,7 +107,7 @@ class Mox_timers(hass.Hass):
         starts as another ends, the device is left as it is. 'On' is skipped while away.
         """
         turn_on = turn_off = None
-        for n in range(1, self.slots + 1):
+        for n in range(1, self.device_slots[device] + 1):
             if self.get_state(self.helper(device, n)) != 'on':
                 continue
             on_time = (self.get_state(self.helper(device, n, 'on')) or '')[:5]

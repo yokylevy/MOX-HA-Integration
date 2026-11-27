@@ -45,5 +45,6 @@ mox_mqtt:
 #   away_switch: input_boolean.away_from_home   # "on" times are skipped while away
 #   devices:
 #     - input_boolean.bedroom_ac
+#     - light.bedroom_light: 1                  # optional: this device's own number of timers
 #   fans:                                       # optional fan swap: AC off -> fan on
 #     input_boolean.bedroom_ac: input_boolean.bedroom_fan

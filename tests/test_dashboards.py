@@ -27,6 +27,20 @@ class DashboardTests(unittest.TestCase):
         with open(os.path.join(self.out, f"{name}.dash"), encoding='utf-8') as f:
             return yaml.safe_load(f)
 
+    def test_single_timer_has_no_label(self):
+        """One timer: no label row, and the switch is named after the device."""
+        rooms = os.path.join(self.out, 'rooms.yaml')
+        with open(rooms, 'w', encoding='utf-8') as f:
+            f.write("main: Main\nrooms:\n  - id: Bed\n    title: Bedroom\n    devices:\n"
+                    "      - {entity: light.bed_light, title: Light, timers: 1}\n")
+        make_dashboards.build(rooms, self.out)
+        bed = self.page('Bed')
+        self.assertNotIn('t0_label', bed)
+        self.assertEqual(bed['t0_1']['title'], 'Timer Light')
+        self.assertEqual(bed['t0_1']['entity'], 'input_boolean.timer_bed_light_1')
+        self.assertIn('t0_1(2x1), t0_1_on(3x1), t0_1_off(3x1)', bed['layout'])
+        self.assertFalse(any('label' in str(row) for row in bed['layout']))
+
     def test_example(self):
         """Example."""
         pages = make_dashboards.build(os.path.join(ROOT, 'dashboards', 'rooms.example.yaml'), self.out)
